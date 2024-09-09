@@ -346,7 +346,7 @@ class FlashSelfMHAModified(nn.Module):
         self.num_heads = num_heads
         assert self.dim % num_heads == 0, "self.kdim must be divisible by num_heads"
         self.head_dim = self.dim // num_heads
-        assert self.head_dim % 8 == 0 and self.head_dim <= 128, "Only support head_dim <= 128 and divisible by 8"
+        assert self.head_dim % 8 == 0 and self.head_dim <= 128, "Only support head_dim <= 128 and divisible by 8, got {}".format(self.head_dim)
 
         self.Wqkv = nn.Linear(dim, 3 * dim, bias=qkv_bias, **factory_kwargs)
         # TODO: eps should be 1 / 65530 if using fp16
