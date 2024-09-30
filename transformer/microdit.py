@@ -1,8 +1,11 @@
 import torch.nn as nn
 from .embed import PatchEmbed, get_2d_sincos_pos_embed
-from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify
+from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify, strings_to_tensor
 from .backbone import TransformerBackbone
 from .moedit import TimestepEmbedder
+import lightning as L
+import torch
+from torch.utils.data import DataLoader
 
 class PatchMixer(nn.Module):
     def __init__(self, embed_dim, num_heads, num_layers=2):
@@ -144,3 +147,80 @@ class MicroDiT(nn.Module):
         x = unpatchify(x, self.patch_size, height, width)
         
         return x
+
+latents_mean = torch.tensor(-0.57)
+latents_std = torch.tensor(6.91)
+
+class LitMicroDiT(L.LightningModule):
+    def __init__(self, model, train_ds, learning_rate=1e-4, batch_size=1, ln=True, mask_ratio=0.5):
+        super().__init__()
+        self.model = model
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.ln = ln
+        self.mask_ratio = mask_ratio
+        self.train_ds = train_ds
+
+    def forward(self, x, t, mask):
+        self.model(x, t, mask)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=self.learning_rate, total_steps=self.trainer.estimated_stepping_batches
+        )
+
+        return {
+        "optimizer": optimizer,
+        "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
+
+    def train_dataloader(self):
+        return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
+
+    def training_step(self, batch, batch_idx):
+        bs = batch["latents"].shape[0]
+        latents = batch["latents"]
+        image_prompts = strings_to_tensor(batch["prompt_string"]).to(self.device)
+        latents = (latents - latents_mean) / latents_std
+
+        mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
+
+        if self.ln:
+            nt = torch.randn((bs,)).to(self.device)
+            t = torch.sigmoid(nt)
+        else:
+            t = torch.rand((bs,)).to(self.device)
+        texp = t.view([bs, *([1] * len(latents.shape[1:]))])
+        z1 = torch.randn_like(latents)
+        zt = (1 - texp) * latents + texp * z1
+        
+        vtheta = self.model(zt, t, image_prompts, mask)
+        latents = latents * mask.unsqueeze(1).view(bs, 1, latents.shape[-2], latents.shape[-1])
+        vtheta = vtheta * mask.unsqueeze(1).view(bs, 1, vtheta.shape[-2], vtheta.shape[-1])
+        z1 = z1 * mask.unsqueeze(1).view(bs, 1, z1.shape[-2], z1.shape[-1])
+
+        batchwise_mse = ((z1 - latents - vtheta) ** 2).mean(dim=list(range(1, len(latents.shape))))
+        loss = batchwise_mse.mean()
+        loss = loss * 1 / (1 - self.mask_ratio)
+
+        return loss
+
+    @torch.inference_mode()
+    def sample(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
+        b = z.size(0)
+        dt = 1.0 / sample_steps
+        dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
+        images = [z]
+        for i in range(sample_steps, 0, -1):
+            t = i / sample_steps
+            t = torch.tensor([t] * b).to(z.device)
+
+            vc = self.model(z, t, cond, None)
+            if null_cond is not None:
+                vu = self.model(z, t, null_cond)
+                vc = vu + cfg * (vc - vu)
+
+            z = z - dt * vc
+            images.append(z)
+        return (images[-1] * latents_std) + latents_mean
