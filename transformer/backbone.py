@@ -36,10 +36,10 @@ class TransformerBackbone(nn.Module):
             # Choose layer type based on the layer index (even/odd)
             if i % 2 == 0:  # Even layers use regular DiT
                 self.layers.append(DiTBlock(embed_dim, scaled_num_heads, mlp_ratio, 
-                                            1, 1, use_flash_attn=True, attn_drop=dropout))
+                                            1, 1, attn_drop=dropout))
             else:  # Odd layers use MoE DiT
                 self.layers.append(DiTBlock(embed_dim, scaled_num_heads, mlp_ratio, 
-                                               num_experts, active_experts, use_flash_attn=True, attn_drop=dropout))
+                                               num_experts, active_experts, attn_drop=dropout))
 
         self.output_layer = nn.Linear(embed_dim, input_dim)
 

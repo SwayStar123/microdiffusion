@@ -9,7 +9,7 @@ from torch.nn.utils import clip_grad_norm_
 import numpy as np
 from rf import RF
 from accelerate import Accelerator
-from transformer.micro_dit import MicroDiT
+from transformer.microdit import MicroDiT
 from transformer.utils import strings_to_tensor, random_mask, remove_masked_patches, add_masked_patches
 import matplotlib.pyplot as plt
 import os
