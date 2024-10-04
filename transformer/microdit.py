@@ -179,9 +179,10 @@ class LitMicroDiT(L.LightningModule):
         return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
 
     def training_step(self, batch, batch_idx):
-        bs = batch["latents"].shape[0]
-        latents = batch["latents"]
-        image_prompts = strings_to_tensor(batch["prompt_string"]).to(self.device)
+        latents, prompt = batch
+        bs = latents.shape[0]
+        image_prompts = strings_to_tensor(prompt).to(self.device)
+
         latents = (latents - latents_mean) / latents_std
 
         mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)

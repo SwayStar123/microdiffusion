@@ -1,5 +1,5 @@
 import torch
-from datasets import load_from_disk
+from celebaattrs import CelebAAttrsDataset
 from diffusers import AutoencoderKL
 from transformer.microdit import LitMicroDiT, MicroDiT
 import os
@@ -21,14 +21,11 @@ patch_mixer_layers = 1
 epochs = 5
 mask_ratio = 0.75
 
-train_ds = load_from_disk("datasets/CelebA-attrs-latents/train")
-# validation_ds = load_from_disk("../../datasets/CelebA-attrs-latents/validation")
-# test_ds = load_from_disk("../../datasets/CelebA-attrs-latents/test")
+train_ds = CelebAAttrsDataset("train")
+# validation_ds = CelebAAttrsDataset("validation")
+# test_ds = CelebAAttrsDataset("test")
 
-# validation_dl = DataLoader(validation_ds, batch_size=bs, shuffle=True)
-# test_dl = DataLoader(test_ds, batch_size=bs, shuffle=True)  
-
-vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", cache_dir="models/vae")
+vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", cache_dir="../../models/vae")
 model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, num_heads, mlp_dim, class_label_dim, patch_mixer_layers=patch_mixer_layers)
 
 print("Number of parameters: ", sum(p.numel() for p in model.parameters()))
@@ -39,9 +36,8 @@ model = LitMicroDiT(model, mask_ratio=mask_ratio, batch_size=bs, train_ds=train_
 
 checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=5)
 # swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
-logger = TensorBoardLogger("tb_logs", name="my_model")
 
-trainer = L.Trainer(max_epochs=epochs, callbacks=[checkpoint_callback], logger=logger)
+trainer = L.Trainer(max_epochs=epochs, callbacks=[checkpoint_callback])
 tuner = Tuner(trainer)
 #tuner.scale_batch_size(model, mode="power")
 tuner.lr_find(model)
@@ -58,7 +54,7 @@ model.batch_size = int(bs * (1-mask_ratio) * 0.5)
 finetuning_steps = finetuning_steps // model.batch_size
 model.mask_ratio = 0
 
-trainer = L.Trainer(max_steps=finetuning_steps, callbacks=[checkpoint_callback], logger=logger)
+trainer = L.Trainer(max_steps=finetuning_steps, callbacks=[checkpoint_callback])
 tuner = Tuner(trainer)
 # tuner.scale_batch_size(model, mode="power")
 tuner.lr_find(model)
