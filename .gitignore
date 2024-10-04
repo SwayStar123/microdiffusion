@@ -1,2 +1,4 @@
 datasets
 models
+lightning_logs
+__pycache__

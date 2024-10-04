@@ -1,6 +1,38 @@
 import torch
 import torch.nn.functional as F
 
+def apply_mask_to_tensor(x, mask, patch_size):
+    """
+    Applies a mask to a tensor. Turns the masked values to 0s.
+
+    Args:
+        x (torch.Tensor): Tensor of shape (bs, c, h, w)
+        mask (torch.Tensor): Tensor of shape (bs, num_patches)
+        patch_size (int): Size of each patch.
+
+    Returns:
+        torch.Tensor: Tensor of shape (bs, c, h, w) with the masked values turned to 0s.
+    """
+    bs, c, h, w = x.shape
+    num_patches_h = h // patch_size
+    num_patches_w = w // patch_size
+
+    # Ensure that height and width are divisible by patch_size
+    assert h % patch_size == 0 and w % patch_size == 0, "Height and width must be divisible by patch_size. Height: {}, Width: {}, Patch size: {}".format(h, w, patch_size)
+
+    # Reshape mask to (bs, num_patches_h, num_patches_w)
+    mask = mask.view(bs, num_patches_h, num_patches_w)
+
+    # Expand the mask to cover each patch
+    # (bs, num_patches_h, num_patches_w) -> (bs, 1, h, w)
+    mask = mask.unsqueeze(1)  # Add channel dimension
+    mask = mask.repeat(1, 1, patch_size, patch_size)  # Repeat for patch_size
+    mask = mask.view(bs, 1, h, w)  # Reshape to (bs, 1, h, w)
+
+    # Apply the mask to the input tensor
+    x = x * mask
+
+    return x
 def unpatchify(x, patch_size, height, width):
     """
     Reconstructs images from patches.

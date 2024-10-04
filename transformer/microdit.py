@@ -1,6 +1,6 @@
 import torch.nn as nn
 from .embed import PatchEmbed, get_2d_sincos_pos_embed
-from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify, strings_to_tensor
+from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify, strings_to_tensor, apply_mask_to_tensor
 from .backbone import TransformerBackbone
 from .moedit import TimestepEmbedder
 import lightning as L
@@ -197,9 +197,10 @@ class LitMicroDiT(L.LightningModule):
         zt = (1 - texp) * latents + texp * z1
         
         vtheta = self.model(zt, t, image_prompts, mask)
-        latents = latents * mask.unsqueeze(1).view(bs, 1, latents.shape[-2], latents.shape[-1])
-        vtheta = vtheta * mask.unsqueeze(1).view(bs, 1, vtheta.shape[-2], vtheta.shape[-1])
-        z1 = z1 * mask.unsqueeze(1).view(bs, 1, z1.shape[-2], z1.shape[-1])
+
+        latents = apply_mask_to_tensor(latents, mask, self.model.patch_size)
+        vtheta = apply_mask_to_tensor(vtheta, mask, self.model.patch_size)
+        z1 = apply_mask_to_tensor(z1, mask, self.model.patch_size)
 
         batchwise_mse = ((z1 - latents - vtheta) ** 2).mean(dim=list(range(1, len(latents.shape))))
         loss = batchwise_mse.mean()
