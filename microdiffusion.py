@@ -8,9 +8,9 @@ from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import StochasticWeightAveraging, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 
-bs = 256
+bs = 128
 input_dim = 4  # 4 channels in latent space
-patch_size = (4, 2)
+patch_size = (2, 2)
 embed_dim = 384
 num_layers = 12
 num_heads = 6
