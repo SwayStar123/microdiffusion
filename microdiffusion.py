@@ -8,15 +8,21 @@ from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import StochasticWeightAveraging, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 
-bs = 128
+bs = 256
 input_dim = 4  # 4 channels in latent space
-patch_size = 2 
+patch_size = (4, 2)
 embed_dim = 384
 num_layers = 12
 num_heads = 6
 mlp_dim = embed_dim * 4
 class_label_dim = 40  # 40 attributes in CelebA dataset
+pos_embed_dim = 60
+timestep_class_embed_dim = 60
+num_experts = 4
+active_experts = 2
 patch_mixer_layers = 1
+dropout = 0.1
+embed_cat = True
 
 epochs = 5
 mask_ratio = 0.75
@@ -26,7 +32,10 @@ train_ds = CelebAAttrsDataset("train")
 # test_ds = CelebAAttrsDataset("test")
 
 vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", cache_dir="../../models/vae")
-model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, num_heads, mlp_dim, class_label_dim, patch_mixer_layers=patch_mixer_layers)
+model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
+                num_heads, mlp_dim, class_label_dim, timestep_class_embed_dim,
+                pos_embed_dim, num_experts, active_experts,
+                dropout, patch_mixer_layers, embed_cat)
 
 print("Number of parameters: ", sum(p.numel() for p in model.parameters()))
 

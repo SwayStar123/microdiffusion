@@ -11,11 +11,11 @@ def nearest_divisor(scaled_num_heads, embed_dim):
     return nearest
 
 class TransformerBackbone(nn.Module):
-    def __init__(self, input_dim: int, embed_dim: int, num_layers: int, num_heads: int, mlp_dim: int, 
+    def __init__(self, input_dim: int, embed_dim: int, class_embed_dim: int, num_layers: int, num_heads: int, mlp_dim: int, 
                  num_experts: int = 4, active_experts: int = 2, dropout: float = 0.1):
         super().__init__()
         self.input_embedding = nn.Linear(input_dim, embed_dim)
-        self.class_embedding = nn.Linear(embed_dim, embed_dim)
+        self.class_embedding = nn.Linear(class_embed_dim, embed_dim)
 
         # Define scaling ranges for m_f and m_a
         mf_min, mf_max = 0.5, 4.0

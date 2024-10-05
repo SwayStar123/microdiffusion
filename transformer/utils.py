@@ -14,11 +14,11 @@ def apply_mask_to_tensor(x, mask, patch_size):
         torch.Tensor: Tensor of shape (bs, c, h, w) with the masked values turned to 0s.
     """
     bs, c, h, w = x.shape
-    num_patches_h = h // patch_size
-    num_patches_w = w // patch_size
+    num_patches_h = h // patch_size[0]
+    num_patches_w = w // patch_size[1]
 
     # Ensure that height and width are divisible by patch_size
-    assert h % patch_size == 0 and w % patch_size == 0, "Height and width must be divisible by patch_size. Height: {}, Width: {}, Patch size: {}".format(h, w, patch_size)
+    assert h % patch_size[0] == 0 and w % patch_size[1] == 0, "Height and width must be divisible by patch_size. Height: {}, Width: {}, Patch size: {}".format(h, w, patch_size)
 
     # Reshape mask to (bs, num_patches_h, num_patches_w)
     mask = mask.view(bs, num_patches_h, num_patches_w)
@@ -26,13 +26,14 @@ def apply_mask_to_tensor(x, mask, patch_size):
     # Expand the mask to cover each patch
     # (bs, num_patches_h, num_patches_w) -> (bs, 1, h, w)
     mask = mask.unsqueeze(1)  # Add channel dimension
-    mask = mask.repeat(1, 1, patch_size, patch_size)  # Repeat for patch_size
+    mask = mask.repeat(1, 1, patch_size[0], patch_size[1])  # Repeat for patch_size
     mask = mask.view(bs, 1, h, w)  # Reshape to (bs, 1, h, w)
 
     # Apply the mask to the input tensor
     x = x * mask
 
     return x
+
 def unpatchify(x, patch_size, height, width):
     """
     Reconstructs images from patches.
@@ -47,14 +48,14 @@ def unpatchify(x, patch_size, height, width):
         torch.Tensor: Reconstructed image of shape (bs, in_channels, height, width)
     """
     bs, num_patches, patch_dim = x.shape
-    in_channels = patch_dim // (patch_size ** 2)
-    num_patches_h = height // patch_size
-    num_patches_w = width // patch_size
+    in_channels = patch_dim // (patch_size[0] * patch_size[1])
+    num_patches_h = height // patch_size[0]
+    num_patches_w = width // patch_size[1]
 
     # Ensure num_patches equals num_patches_h * num_patches_w
     assert num_patches == num_patches_h * num_patches_w, "Mismatch in number of patches."
 
-    # Reshape to (bs, in_channels * patch_size * patch_size, num_patches)
+    # Reshape to (bs, in_channels * patch_size_h * patch_size_w, num_patches)
     x = x.permute(0, 2, 1)
 
     # Use fold to reconstruct
@@ -86,7 +87,7 @@ def strings_to_tensor(string_list):
     
     return tensor
 
-def random_mask(bs: int, height: int, width: int, patch_size: int, mask_ratio: float) -> torch.Tensor:
+def random_mask(bs: int, height: int, width: int, patch_size: tuple[int, int], mask_ratio: float) -> torch.Tensor:
     """
     Generates a random mask for patched images. Randomly selects patches to mask.
 
@@ -94,13 +95,13 @@ def random_mask(bs: int, height: int, width: int, patch_size: int, mask_ratio: f
         bs (int): Batch size.
         height (int): Height of the image.
         width (int): Width of the image.
-        patch_size (int): Size of the patches.
+        patch_size (tuple of int): Size of the patches.
         mask_ratio (float): Ratio of patches to mask. Ranges from 0 to 1. mask_ratio * 100 = percentage of 1s in the mask
 
     Returns:
         mask (torch.Tensor): A tensor of shape (bs, num_patches) with values in {0, 1}.
     """
-    num_patches = (height // patch_size) * (width // patch_size)
+    num_patches = (height // patch_size[0]) * (width // patch_size[1])
     num_patches_to_mask = int(num_patches * mask_ratio)
     
     # Create a tensor of random values
