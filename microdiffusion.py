@@ -1,5 +1,5 @@
 import torch
-from celebaattrs import CelebAAttrsDataset
+from dataset.celebaattrs import CelebAAttrsDataset
 from diffusers import AutoencoderKL
 from transformer.microdit import LitMicroDiT, MicroDiT
 import os
