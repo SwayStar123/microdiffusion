@@ -29,8 +29,8 @@ USERNAME = "SwayStar123"
 DATASET_NAME = "commoncatalog_cc_by_moondream_latents"
 IMG_COLUMN_NAME = "jpg"
 IMAGE_ID_COLUMN_NAME = "key"
-BATCH_SIZE = 8
-IMAGES_PER_PARQUET = BATCH_SIZE * 10000
+BATCH_SIZE_PER_GPU = 8
+IMAGES_PER_PARQUET = BATCH_SIZE_PER_GPU * 10000
 CACHE_DIR_BASE = "../.."
 
 """
@@ -437,7 +437,6 @@ def create_schema():
         ('latent', pa.list_(pa.float32())),
         ('latent_shape', pa.list_(pa.int64())),
         ('embedding', pa.list_(pa.float32())),
-        ('embedding_shape', pa.list_(pa.int64())),
         ('prompt', pa.string())
     ])
     return latents_schema
@@ -449,7 +448,6 @@ def write_parquet(latents_list, latents_parquet_file, latents_schema):
         'latent': [item['latent'] for item in latents_list],
         'latent_shape': [item['latent_shape'] for item in latents_list],
         'embedding': [item['embedding'] for item in latents_list],
-        'embedding_shape': [item['embedding_shape'] for item in latents_list],
         'prompt': [item['prompt'] for item in latents_list]
     }, schema=latents_schema)
 
@@ -470,7 +468,7 @@ def upload_and_delete_files(api, latents_parquet_file, rank, index):
 
 def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer):
     ddp_setup(rank, world_size)
-    dataset = split_dataset_by_node(dataset, rank, world_size).batch(BATCH_SIZE)
+    dataset = split_dataset_by_node(dataset, rank, world_size).batch(BATCH_SIZE_PER_GPU)
 
     device = torch.device(f'cuda:{rank}')
     vae = vae.to(device)
@@ -505,13 +503,12 @@ def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, buck
                     'latent': latent.numpy().flatten().tolist(),
                     'latent_shape': list(latent.shape),
                     'embedding': text_embedding.numpy().flatten().tolist(),
-                    'embedding_shape': list(text_embedding.shape),
                     'prompt': prompt
                 })
 
             # Write Parquet files after reaching the IMAGES_PER_PARQUET threshold
-            if (i + 1) % IMAGES_PER_PARQUET//BATCH_SIZE == 0:
-                index = i // (IMAGES_PER_PARQUET//BATCH_SIZE)
+            if (i + 1) % IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU == 0:
+                index = i // (IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU)
                 latents_parquet_file = f"{latents_dir}/{index}_latents.parquet"
 
                 write_parquet(latents_list, latents_parquet_file, latents_schema)
@@ -522,11 +519,11 @@ def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, buck
                 # Clear the lists for the next batch
                 latents_list.clear()
 
-            progress_bar.update(BATCH_SIZE * world_size)
+            progress_bar.update(BATCH_SIZE_PER_GPU * world_size)
 
         # Handle remaining data after loop ends
         if latents_list:
-            index = (i // (IMAGES_PER_PARQUET//BATCH_SIZE)) + 1
+            index = (i // (IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU)) + 1
             latents_parquet_file = f"{latents_dir}/{index}_latents.parquet"
 
             write_parquet(latents_list, latents_parquet_file, latents_schema)
