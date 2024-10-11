@@ -25,7 +25,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 import json
 
-USERNAME = "SwayStar123"
+USERNAME = "KagakuAI"
 DATASET_NAME = "commoncatalog_cc_by_moondream_latents"
 IMG_COLUMN_NAME = "jpg"
 IMAGE_ID_COLUMN_NAME = "key"
