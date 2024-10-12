@@ -7,6 +7,8 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader
 
+SDXL_VAE_SCALING_FACTOR = 0.13025
+
 class PatchMixer(nn.Module):
     def __init__(self, embed_dim, num_heads, num_layers=2):
         super().__init__()
@@ -199,9 +201,6 @@ class MicroDiT(nn.Module):
         
         return x
 
-latents_mean = torch.tensor(-0.57)
-latents_std = torch.tensor(6.91)
-
 class LitMicroDiT(L.LightningModule):
     def __init__(self, model, train_ds, learning_rate=1e-4, batch_size=1, ln=True, mask_ratio=0.5):
         super().__init__()
@@ -234,7 +233,7 @@ class LitMicroDiT(L.LightningModule):
         bs = latents.shape[0]
         image_prompts = strings_to_tensor(prompt).to(self.device)
 
-        latents = (latents - latents_mean) / latents_std
+        latents = latents * SDXL_VAE_SCALING_FACTOR
 
         mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
 
@@ -276,4 +275,4 @@ class LitMicroDiT(L.LightningModule):
 
             z = z - dt * vc
             images.append(z)
-        return (images[-1] * latents_std) + latents_mean
+        return (images[-1] / SDXL_VAE_SCALING_FACTOR)
