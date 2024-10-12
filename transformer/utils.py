@@ -48,23 +48,27 @@ def unpatchify(x, patch_size, height, width):
         torch.Tensor: Reconstructed image of shape (bs, in_channels, height, width)
     """
     bs, num_patches, patch_dim = x.shape
-    in_channels = patch_dim // (patch_size[0] * patch_size[1])
-    num_patches_h = height // patch_size[0]
-    num_patches_w = width // patch_size[1]
+    H, W = patch_size
+    in_channels = patch_dim // (H * W)
+
+    # Calculate the number of patches along each dimension
+    num_patches_h = height // H
+    num_patches_w = width // W
 
     # Ensure num_patches equals num_patches_h * num_patches_w
     assert num_patches == num_patches_h * num_patches_w, "Mismatch in number of patches."
 
-    # Reshape to (bs, in_channels * patch_size_h * patch_size_w, num_patches)
-    x = x.permute(0, 2, 1)
+    # Reshape x to (bs, num_patches_h, num_patches_w, H, W, in_channels)
+    x = x.view(bs, num_patches_h, num_patches_w, H, W, in_channels)
 
-    # Use fold to reconstruct
-    reconstructed = F.fold(
-        x,
-        output_size=(height, width),
-        kernel_size=patch_size,
-        stride=patch_size
-    )
+    # Permute x to (bs, num_patches_h, H, num_patches_w, W, in_channels)
+    x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+
+    # Reshape x to (bs, height, width, in_channels)
+    reconstructed = x.view(bs, height, width, in_channels)
+
+    # Permute back to (bs, in_channels, height, width)
+    reconstructed = reconstructed.permute(0, 3, 1, 2).contiguous()
 
     return reconstructed
 

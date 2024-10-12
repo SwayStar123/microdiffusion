@@ -30,7 +30,7 @@ DATASET_NAME = "commoncatalog_cc_by_moondream_latents"
 IMG_COLUMN_NAME = "jpg"
 IMAGE_ID_COLUMN_NAME = "key"
 BATCH_SIZE_PER_GPU = 8
-IMAGES_PER_PARQUET = BATCH_SIZE_PER_GPU * 10000
+IMAGES_PER_PARQUET = BATCH_SIZE_PER_GPU * 100
 CACHE_DIR_BASE = "../.."
 
 """
@@ -453,20 +453,20 @@ def write_parquet(latents_list, latents_parquet_file, latents_schema):
 
     pq.write_table(latents_table, latents_parquet_file)
 
-def upload_and_delete_files(api, latents_parquet_file, rank, index):
-    print(f"Uploading parquet for rank {rank} and index {index}")
-    # Upload files
-    api.upload_file(
-        path_or_fileobj=latents_parquet_file,
-        path_in_repo=f"{rank}/latents/{index}_latents.parquet",
-        repo_id=f"{USERNAME}/{DATASET_NAME}",
-        repo_type="dataset",
-    )
+# def upload_and_delete_files(api, latents_parquet_file, rank, index):
+#     print(f"Uploading parquet for rank {rank} and index {index}")
+#     # Upload files
+#     api.upload_file(
+#         path_or_fileobj=latents_parquet_file,
+#         path_in_repo=f"{rank}/latents/{index}_latents.parquet",
+#         repo_id=f"{USERNAME}/{DATASET_NAME}",
+#         repo_type="dataset",
+#     )
 
-    # Delete local files
-    os.remove(latents_parquet_file)
+#     # Delete local files
+#     os.remove(latents_parquet_file)
 
-def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer):
+def process_images(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer):
     ddp_setup(rank, world_size)
     dataset = split_dataset_by_node(dataset, rank, world_size).batch(BATCH_SIZE_PER_GPU)
 
@@ -485,6 +485,7 @@ def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, buck
     # Create directories if they don't exist
     latents_dir = f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/{rank}/latents"
     os.makedirs(latents_dir, exist_ok=True)
+    index = 0
 
     with torch.no_grad(), torch.amp.autocast(device_type="cuda"):
         progress_bar = tqdm(desc=f"Approximate processed", unit="img") if rank == 0 else None
@@ -492,6 +493,9 @@ def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, buck
             # Calculate latents and embeddings
             latents, text_embeddings, prompts = calculate_latents_and_embeddings(batch, vae, siglip_model, tokenizer, device, bucket_manager, moondream_model, moondream_tokenizer)
             image_ids = batch[IMAGE_ID_COLUMN_NAME]
+            assert len(latents) == BATCH_SIZE_PER_GPU, f"Latents length mismatch: {len(latents)} != {BATCH_SIZE_PER_GPU}"
+            assert len(text_embeddings) == BATCH_SIZE_PER_GPU, f"Text embeddings length mismatch: {len(text_embeddings)} != {BATCH_SIZE_PER_GPU}"
+            assert len(prompts) == BATCH_SIZE_PER_GPU, f"Prompts length mismatch: {len(prompts)} != {BATCH_SIZE_PER_GPU}"
 
             for image_id, latent, text_embedding, prompt in zip(image_ids, latents, text_embeddings, prompts):
                 image_id_res_map[image_id] = latent.shape[1:]
@@ -507,35 +511,36 @@ def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, buck
                 })
 
             # Write Parquet files after reaching the IMAGES_PER_PARQUET threshold
-            if (i + 1) % IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU == 0:
-                index = i // (IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU)
+            if (i + 1) % (IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU) == 0:
                 latents_parquet_file = f"{latents_dir}/{index}_latents.parquet"
 
                 write_parquet(latents_list, latents_parquet_file, latents_schema)
 
                 # Submit the upload and delete task to the executor
-                executor.submit(upload_and_delete_files, api, latents_parquet_file, rank, index)
+                # Hugging face didnt increase repo limit so cant upload. Save dataset locally instead.
+                # executor.submit(upload_and_delete_files, api, latents_parquet_file, rank, index)
 
                 # Clear the lists for the next batch
                 latents_list.clear()
+                index += 1
 
             progress_bar.update(BATCH_SIZE_PER_GPU * world_size)
 
         # Handle remaining data after loop ends
         if latents_list:
-            index = (i // (IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU)) + 1
             latents_parquet_file = f"{latents_dir}/{index}_latents.parquet"
 
             write_parquet(latents_list, latents_parquet_file, latents_schema)
 
             # Submit the upload and delete task to the executor
-            executor.submit(upload_and_delete_files, api, latents_parquet_file, rank, index)
+            # Hugging face didnt increase repo limit so cant upload. Save dataset locally instead.
+            # executor.submit(upload_and_delete_files, api, latents_parquet_file, rank, index)
 
     # Wait for all uploads to complete
     executor.shutdown(wait=True)
 
-    resmap_dir = f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/resmaps"
-    caption_dir = f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/captions"
+    resmap_dir = f"{CACHE_DIR_BASE}/datasets/commoncatalog_cc_by_moondream_captions/res_maps"
+    caption_dir = f"{CACHE_DIR_BASE}/datasets/commoncatalog_cc_by_moondream_captions/captions"
     os.makedirs(resmap_dir, exist_ok=True)
     os.makedirs(caption_dir, exist_ok=True)
 
@@ -544,32 +549,32 @@ def main(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, buck
         json.dump(image_id_res_map, fh)
 
     # Save caption map
-    with open(f"{caption_dir}/{rank}_caption_map.json", "w+") as fh:
+    with open(f"{caption_dir}/{rank}_captions.json", "w+") as fh:
         json.dump(image_id_caption_map, fh)
 
     # Upload res and caption maps
     api.upload_file(
         path_or_fileobj=f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/resmaps/{rank}_res_map.json",
-        path_in_repo=f"{rank}/res_map.json",
-        repo_id=f"{USERNAME}/{DATASET_NAME}",
+        path_in_repo=f"res_maps/{rank}_res_map.json",
+        repo_id=f"{USERNAME}/commoncatalog_cc_by_moondream_captions",
         repo_type="dataset",
     )
     api.upload_file(
-        path_or_fileobj=f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/captions/{rank}_caption_map.json",
-        path_in_repo=f"{rank}/captions.json",
+        path_or_fileobj=f"{caption_dir}/captions/{rank}_caption_map.json",
+        path_in_repo=f"captions/{rank}_captions.json",
         repo_id=f"{USERNAME}/commoncatalog_cc_by_moondream_captions",
         repo_type="dataset",
     )
 
     destroy_process_group()
 
-if __name__ == "__main__":
+def preprocess_datasets_main(test=False):
     world_size = torch.cuda.device_count()
 
-    # datasets.config.HF_HUB_OFFLINE = 1 # Comment this out if you havent downloaded the dataset yet
-    # dataset = load_dataset("sroecker/recap-coco30k-moondream", split="train", cache_dir=f"{CACHE_DIR_BASE}/datasets/coco30k_moondream")
-    dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"]).take(1000)
-    # moondream_captions_dataset = load_dataset("SwayStar123/commoncatalog-cc-by-moondream_captions", split="train")
+    if test:
+        dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"]).take(1000)
+    else:
+        dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"])
 
     vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", cache_dir=f"{CACHE_DIR_BASE}/models/vae")
     siglip_model, preprocess = create_model_from_pretrained('hf-hub:timm/ViT-SO400M-14-SigLIP-384', cache_dir=f"{CACHE_DIR_BASE}/models/siglip")
@@ -578,7 +583,6 @@ if __name__ == "__main__":
     bucket_manager = BucketManager()
     api = HfApi()
     api.create_repo(repo_id=f"{USERNAME}/{DATASET_NAME}", repo_type="dataset", exist_ok=True)
-    api.create_repo(repo_id=f"{USERNAME}/commoncatalog_cc_by_moondream_captions", repo_type="dataset", exist_ok=True)
 
     model_id = "vikhyatk/moondream2"
     revision = "2024-07-23"
@@ -587,4 +591,8 @@ if __name__ == "__main__":
     )
     moondream_tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, cache_dir=f"{CACHE_DIR_BASE}/models/moondream")
 
-    mp.spawn(main, args=(world_size, dataset, vae, siglip_model, siglip_tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer), nprocs=world_size)
+    mp.spawn(process_images, args=(world_size, dataset, vae, siglip_model, siglip_tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer), nprocs=world_size)
+
+
+if __name__ == "__main__":
+    preprocess_datasets_main(test=True)
