@@ -175,19 +175,19 @@ def calculate_latents_and_embeddings(batch, vae, siglip_model, siglip_tokenizer,
             queue[image.size] = {keys[i]: image}
 
     res_latents = {}
-    res_prompts = {}
+    res_captions = {}
     for resolution, batch in queue.items():
         ks = batch.keys()
         imgs = list(batch.values())
 
-        prompts = moondream_model.batch_answer(
+        captions = moondream_model.batch_answer(
             images=imgs,
-            prompts=["Caption this image."] * len(imgs),
+            captions=["Caption this image."] * len(imgs),
             tokenizer=moondream_tokenizer,
         )
-        prompts_list = [prompt for prompt in prompts]
-        for key, prompt in zip(ks, prompts_list):
-            res_prompts[key] = prompt
+        captions_list = [caption for caption in captions]
+        for key, caption in zip(ks, captions_list):
+            res_captions[key] = caption
 
         imgs = [preprocess_image(image) for image in imgs]
 
@@ -200,12 +200,12 @@ def calculate_latents_and_embeddings(batch, vae, siglip_model, siglip_tokenizer,
 
     # Reorder latents based on keys
     latents = [res_latents[key] for key in keys]
-    prompts = [res_prompts[key] for key in keys]
+    captions = [res_captions[key] for key in keys]
 
-    texts = siglip_tokenizer(prompts, context_length=siglip_model.context_length).to(device)
+    texts = siglip_tokenizer(captions, context_length=siglip_model.context_length).to(device)
     text_embeddings = siglip_model.encode_text(texts)
 
-    return latents, text_embeddings.cpu(), prompts
+    return latents, text_embeddings.cpu(), captions
 
 def create_schema():
     """Create schemas for latents and embeddings parquet tables."""
@@ -214,7 +214,7 @@ def create_schema():
         ('latent', pa.list_(pa.float32())),
         ('latent_shape', pa.list_(pa.int64())),
         ('embedding', pa.list_(pa.float32())),
-        ('prompt', pa.string())
+        ('caption', pa.string())
     ])
     return latents_schema
 
@@ -225,7 +225,7 @@ def write_parquet(latents_list, latents_parquet_file, latents_schema):
         'latent': [item['latent'] for item in latents_list],
         'latent_shape': [item['latent_shape'] for item in latents_list],
         'embedding': [item['embedding'] for item in latents_list],
-        'prompt': [item['prompt'] for item in latents_list]
+        'caption': [item['caption'] for item in latents_list]
     }, schema=latents_schema)
 
     pq.write_table(latents_table, latents_parquet_file)
@@ -268,15 +268,15 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
         progress_bar = tqdm(desc=f"Approximate processed", unit="img") if rank == 0 else None
         for i, batch in enumerate(dataset):
             # Calculate latents and embeddings
-            latents, text_embeddings, prompts = calculate_latents_and_embeddings(batch, vae, siglip_model, tokenizer, device, bucket_manager, moondream_model, moondream_tokenizer)
+            latents, text_embeddings, captions = calculate_latents_and_embeddings(batch, vae, siglip_model, tokenizer, device, bucket_manager, moondream_model, moondream_tokenizer)
             image_ids = batch[IMAGE_ID_COLUMN_NAME]
             assert len(latents) == BATCH_SIZE_PER_GPU, f"Latents length mismatch: {len(latents)} != {BATCH_SIZE_PER_GPU}"
             assert len(text_embeddings) == BATCH_SIZE_PER_GPU, f"Text embeddings length mismatch: {len(text_embeddings)} != {BATCH_SIZE_PER_GPU}"
-            assert len(prompts) == BATCH_SIZE_PER_GPU, f"Prompts length mismatch: {len(prompts)} != {BATCH_SIZE_PER_GPU}"
+            assert len(captions) == BATCH_SIZE_PER_GPU, f"Captions length mismatch: {len(captions)} != {BATCH_SIZE_PER_GPU}"
 
-            for image_id, latent, text_embedding, prompt in zip(image_ids, latents, text_embeddings, prompts):
+            for image_id, latent, text_embedding, caption in zip(image_ids, latents, text_embeddings, captions):
                 image_id_res_map[image_id] = latent.shape[1:]
-                image_id_caption_map[image_id] = prompt
+                image_id_caption_map[image_id] = caption
 
                 # Append to the lists
                 latents_list.append({
@@ -284,7 +284,7 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
                     'latent': latent.numpy().flatten().tolist(),
                     'latent_shape': list(latent.shape),
                     'embedding': text_embedding.numpy().flatten().tolist(),
-                    'prompt': prompt
+                    'caption': caption
                 })
 
             # Write Parquet files after reaching the IMAGES_PER_PARQUET threshold

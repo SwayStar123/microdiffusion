@@ -229,17 +229,17 @@ class CustomDataset(IterableDataset):
             # Prepare batch data
             batch_latents = []
             batch_embeddings = []
-            batch_prompts = []
+            batch_captions = []
 
             for item in batch_items:
                 # Convert 'latent' and 'embedding' to tensors
                 latent = torch.tensor(item["latent"]).reshape(4, resolution[0], resolution[1])
                 embedding = torch.tensor(item["embedding"])
-                prompt = item["prompt"]
+                caption = item["caption"]
 
                 batch_latents.append(latent)
                 batch_embeddings.append(embedding)
-                batch_prompts.append(prompt)
+                batch_captions.append(caption)
 
             # Stack tensors (assuming all latents and embeddings are of the same shape)
             batch_latents = torch.stack(batch_latents)
@@ -249,13 +249,13 @@ class CustomDataset(IterableDataset):
             yield {
                 "latents": batch_latents,
                 "embeddings": batch_embeddings,
-                "prompts": batch_prompts,
+                "captions": batch_captions,
                 "resolution": resolution,
             }
 
     def __len__(self):
         # Return the total number of samples (approximate if necessary)
-        return self.bucket_manager.batch_total * self.bucket_manager.bsz
+        return self.bucket_manager.batch_total
 
 class LitMicroDiT(L.LightningModule):
     def __init__(self, model, batch_size=1, seed=0, learning_rate=1e-4,
@@ -337,7 +337,7 @@ class LitMicroDiT(L.LightningModule):
     def training_step(self, batch, batch_idx):
         latents = batch["latents"]
         caption_embeddings = batch["embeddings"]
-        prompts = batch["prompts"]
+        captions = batch["captions"]
         resolution = batch["resolution"]
 
         bs = latents.shape[0]
