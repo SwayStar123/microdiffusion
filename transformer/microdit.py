@@ -289,24 +289,23 @@ class LitMicroDiT(L.LightningModule):
             base_res=(64,64),
             dim_limit=128
         )
-        # Compute total_steps
-        self.total_steps = self.bucket_manager.batch_total * self.trainer.max_epochs
-
-    def forward(self, x, t, mask):
-        self.model(x, t, mask)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.learning_rate,
-            total_steps=self.total_steps
+            epochs=self.trainer.max_epochs,
+            steps_per_epoch=self.bucket_manager.batch_total,
         )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
+
+    def forward(self, x, t, mask):
+        self.model(x, t, mask)
 
     def train_dataloader(self):
         # Load the dataset

@@ -303,10 +303,7 @@ class BucketManager:
                     if len(self.epoch[chosen_id]) == 0:
                         del self.epoch[chosen_id]
                 else:
-                    # Move leftovers to left_over dict
-                    if chosen_id not in self.left_over:
-                        self.left_over[chosen_id] = []
-                    self.left_over[chosen_id].extend(self.epoch[chosen_id])
+                    # Not enough images to form a batch, discard them
                     del self.epoch[chosen_id]
             elif chosen_id in self.left_over:
                 if len(self.left_over[chosen_id]) >= self.bsz:
@@ -317,7 +314,7 @@ class BucketManager:
                     if len(self.left_over[chosen_id]) == 0:
                         del self.left_over[chosen_id]
                 else:
-                    # Not enough images to form a batch, keep them for the next epoch
+                    # Not enough images to form a batch, discard them
                     del self.left_over[chosen_id]
             else:
                 # Should not happen

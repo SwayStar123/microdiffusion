@@ -6,7 +6,7 @@ import os
 import lightning as L
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
-
+from dataset.bucket_manager import BucketManager
 if __name__ == "__main__":
     # preprocess_datasets_main(test=True)
     # index_image_id_map_main()
@@ -58,33 +58,3 @@ if __name__ == "__main__":
     trainer.fit(model=model)
 
     print("Training complete.")
-
-
-    print("Starting finetuning...")
-
-    finetuning_steps = model.trainer.estimated_stepping_batches * bs // 10
-    bs = int(bs * (1-mask_ratio) * 0.5)
-    model.batch_size = bs
-    finetuning_steps = finetuning_steps // bs
-    model.mask_ratio = 0
-
-    checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/finetuned/", every_n_epochs=1)
-
-    trainer = L.Trainer(max_steps=finetuning_steps, callbacks=[checkpoint_callback])
-    tuner = Tuner(trainer)
-    # tuner.scale_batch_size(model, mode="power")
-    tuner.lr_find(model)
-
-    trainer.fit(model=model)
-
-    print("Finetuning complete.")
-
-    # Create models directory if it doesn't exist
-    os.makedirs('models/diffusion', exist_ok=True)
-
-    # Save the model
-    torch.save(model.state_dict(), 'models/diffusion/microdiffusion_model.pth')
-
-    print("Model saved successfully.")
-
-
