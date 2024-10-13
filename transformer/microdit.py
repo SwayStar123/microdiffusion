@@ -6,6 +6,15 @@ from .moedit import TimestepEmbedder
 import lightning as L
 import torch
 from torch.utils.data import DataLoader
+import os
+import json
+import glob
+import torch
+import pyarrow.parquet as pq
+from torch.utils.data import IterableDataset, DataLoader
+from torch.distributed import is_initialized, get_world_size, get_rank
+from dataset.bucket_manager import BucketManager
+from datasets import load_dataset
 
 SDXL_VAE_SCALING_FACTOR = 0.13025
 
@@ -53,65 +62,63 @@ class MicroDiT(nn.Module):
         patch_mixer (PatchMixer): Patch mixer layer.
         backbone (TransformerBackbone): Transformer backbone model.
     """
-    def __init__(self, in_channels, patch_size, embed_dim, num_layers, num_heads, mlp_dim, class_label_dim=None, timestep_class_embed_dim=None, pos_embed_dim=None,
+    def __init__(self, in_channels, patch_size, embed_dim, num_layers, num_heads, mlp_dim, caption_embed_dim, timestep_caption_embed_dim=None, pos_embed_dim=None,
                  num_experts=4, active_experts=2, dropout=0.1, patch_mixer_layers=2, embed_cat=False):
         super().__init__()
         
         self.patch_size = patch_size
         self.embed_dim = embed_dim
-        self.class_label_dim = class_label_dim
         self.embed_cat = embed_cat
 
         if self.embed_cat:
             self.pos_embed_dim = pos_embed_dim if pos_embed_dim is not None else embed_dim
-            self.timestep_class_embed_dim = timestep_class_embed_dim if timestep_class_embed_dim is not None else embed_dim
-            self.total_embed_dim = self.timestep_class_embed_dim + self.pos_embed_dim + embed_dim
+            self.timestep_caption_embed_dim = timestep_caption_embed_dim if timestep_caption_embed_dim is not None else embed_dim
+            self.total_embed_dim = self.timestep_caption_embed_dim + self.pos_embed_dim + embed_dim
         else:
             self.pos_embed_dim = embed_dim
-            self.timestep_class_embed_dim = embed_dim
+            self.timestep_caption_embed_dim = embed_dim
             self.total_embed_dim = embed_dim
         
         # Image processing
         self.patch_embed = PatchEmbed(in_channels, embed_dim, patch_size)
         
         # Timestep embedding
-        self.time_embed = TimestepEmbedder(self.timestep_class_embed_dim)
+        self.time_embed = TimestepEmbedder(self.timestep_caption_embed_dim)
         
-        # Class embedding
-        # self.class_embed = nn.Linear(class_label_dim, embed_dim)
-        self.class_embed = nn.Sequential(
-            nn.Linear(class_label_dim, self.timestep_class_embed_dim),
+        # Caption embedding
+        self.caption_embed = nn.Sequential(
+            nn.Linear(caption_embed_dim, self.timestep_caption_embed_dim),
             nn.GELU(),
-            nn.Linear(self.timestep_class_embed_dim, self.timestep_class_embed_dim)
+            nn.Linear(self.timestep_caption_embed_dim, self.timestep_caption_embed_dim)
         )
 
-        # MHA for timestep and class
-        self.mha = nn.MultiheadAttention(self.timestep_class_embed_dim, num_heads, batch_first=True)
+        # MHA for timestep and caption
+        self.mha = nn.MultiheadAttention(self.timestep_caption_embed_dim, num_heads, batch_first=True)
         
-        # MLP for timestep and class
+        # MLP for timestep and caption
         self.mlp = nn.Sequential(
-            nn.Linear(self.timestep_class_embed_dim, self.timestep_class_embed_dim),
+            nn.Linear(self.timestep_caption_embed_dim, self.timestep_caption_embed_dim),
             nn.GELU(),
-            nn.Linear(self.timestep_class_embed_dim, self.timestep_class_embed_dim)
+            nn.Linear(self.timestep_caption_embed_dim, self.timestep_caption_embed_dim)
         )
         
         # Pool + MLP for (MHA + MLP)
         self.pool_mlp = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
             nn.Flatten(),
-            nn.Linear(self.timestep_class_embed_dim, self.timestep_class_embed_dim),
+            nn.Linear(self.timestep_caption_embed_dim, self.timestep_caption_embed_dim),
             nn.GELU(),
-            nn.Linear(self.timestep_class_embed_dim, self.timestep_class_embed_dim)
+            nn.Linear(self.timestep_caption_embed_dim, self.timestep_caption_embed_dim)
         )
         
         # Linear layer after MHA+MLP
-        self.linear = nn.Linear(self.timestep_class_embed_dim, self.timestep_class_embed_dim)
+        self.linear = nn.Linear(self.timestep_caption_embed_dim, self.timestep_caption_embed_dim)
         
         # Patch-mixer
         self.patch_mixer = PatchMixer(self.total_embed_dim, num_heads, patch_mixer_layers)
         
         # Backbone transformer model
-        self.backbone = TransformerBackbone(self.total_embed_dim, self.total_embed_dim, self.timestep_class_embed_dim, num_layers, num_heads, mlp_dim, 
+        self.backbone = TransformerBackbone(self.total_embed_dim, self.total_embed_dim, self.timestep_caption_embed_dim, num_layers, num_heads, mlp_dim, 
                                         num_experts, active_experts, dropout)
         
         # Output layer
@@ -121,10 +128,10 @@ class MicroDiT(nn.Module):
             nn.Linear(self.embed_dim, patch_size[0] * patch_size[1] * in_channels)
         )
 
-    def forward(self, x, t, class_labels, mask=None):
+    def forward(self, x, t, caption_embeddings, mask=None):
         # x: (batch_size, in_channels, height, width)
         # t: (batch_size, 1)
-        # class_labels: (batch_size, class_embed_dim)
+        # caption_embeddings: (batch_size, caption_embed_dim)
         # mask: (batch_size, num_patches)
         
         batch_size, channels, height, width = x.shape
@@ -145,10 +152,10 @@ class MicroDiT(nn.Module):
             x = x + pos_embed
         
         # Timestep embedding
-        t_emb = self.time_embed(t)  # (batch_size, timestep_class_embed_dim)
+        t_emb = self.time_embed(t)  # (batch_size, timestep_caption_embed_dim)
 
-        # Class embedding
-        c_emb = self.class_embed(class_labels)  # (batch_size, timestep_class_embed_dim)
+        # Caption embedding
+        c_emb = self.caption_embed(caption_embeddings)  # (batch_size, timestep_caption_embed_dim)
 
         mha_out = self.mha(t_emb.unsqueeze(1), c_emb.unsqueeze(1), c_emb.unsqueeze(1))[0].squeeze(1)
         mlp_out = self.mlp(mha_out)
@@ -160,7 +167,7 @@ class MicroDiT(nn.Module):
         pool_out = (pool_out + t_emb).unsqueeze(1)
         
         # Apply linear layer
-        cond_signal = self.linear(mlp_out).unsqueeze(1)  # (batch_size, 1, timestep_class_embed_dim)
+        cond_signal = self.linear(mlp_out).unsqueeze(1)  # (batch_size, 1, timestep_caption_embed_dim)
         cond = (cond_signal + pool_out).expand(-1, x.shape[1], -1)
         
         # Add conditioning signal to all patches
@@ -181,7 +188,7 @@ class MicroDiT(nn.Module):
         cond = (mlp_out.unsqueeze(1) + pool_out).expand(-1, x.shape[1], -1)
 
         if self.embed_cat:
-            x[:, :, -self.timestep_class_embed_dim:] = x[:, :, -self.timestep_class_embed_dim:] + cond
+            x[:, :, -self.timestep_caption_embed_dim:] = x[:, :, -self.timestep_caption_embed_dim:] + cond
         else:
             x = x + cond
 
@@ -200,16 +207,90 @@ class MicroDiT(nn.Module):
         x = unpatchify(x, self.patch_size, height, width)
         
         return x
+    
+class CustomDataset(IterableDataset):
+    def __init__(self, dataset, index_image_id_map, bucket_manager):
+        self.dataset = dataset
+        self.index_image_id_map = index_image_id_map
+        self.bucket_manager = bucket_manager
+
+    def __iter__(self):
+        # Generate batches using the BucketManager
+        for batch_data, resolution in self.bucket_manager.generator():
+            # batch_data is a list of image_ids
+            # resolution is the target resolution for the batch
+
+            # Map image_ids to dataset indices
+            indices = [self.index_image_id_map[f"{int(image_id):08d}"] for image_id in batch_data]
+
+            # Fetch data samples from the dataset using indices
+            batch_items = [self.dataset[int(idx)] for idx in indices]
+
+            # Prepare batch data
+            batch_latents = []
+            batch_embeddings = []
+            batch_prompts = []
+
+            for item in batch_items:
+                # Convert 'latent' and 'embedding' to tensors
+                latent = torch.tensor(item["latent"]).reshape(4, resolution[0], resolution[1])
+                embedding = torch.tensor(item["embedding"])
+                prompt = item["prompt"]
+
+                batch_latents.append(latent)
+                batch_embeddings.append(embedding)
+                batch_prompts.append(prompt)
+
+            # Stack tensors (assuming all latents and embeddings are of the same shape)
+            batch_latents = torch.stack(batch_latents)
+            batch_embeddings = torch.stack(batch_embeddings)
+
+            # Yield the batch data and resolution
+            yield {
+                "latents": batch_latents,
+                "embeddings": batch_embeddings,
+                "prompts": batch_prompts,
+                "resolution": resolution,
+            }
+
+    def __len__(self):
+        # Return the total number of samples (approximate if necessary)
+        return self.bucket_manager.batch_total * self.bucket_manager.bsz
 
 class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, train_ds, learning_rate=1e-4, batch_size=1, ln=True, mask_ratio=0.5):
+    def __init__(self, model, batch_size=1, seed=0, learning_rate=1e-4,
+                ln=True, mask_ratio=0.5, dataset_path="../../datasets/commoncatalog_cc_by_moondream_latents",
+                bucket_file = "../../datasets/commoncatalog_cc_by_moondream_metadata/res_map.json",
+                index_image_id_map_path="../../datasets/commoncatalog_cc_by_moondream_metadata/image_id_map.json"):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
-        self.batch_size = batch_size
         self.ln = ln
         self.mask_ratio = mask_ratio
-        self.train_ds = train_ds
+        self.batch_size = batch_size
+        self.seed = seed
+        self.bucket_manager = None
+        self.total_steps = None
+        self.dataset_path = dataset_path
+        self.bucket_file = bucket_file
+        self.index_image_id_map_path = index_image_id_map_path
+
+    def setup(self, stage=None):
+        # Initialize the BucketManager here
+        self.bucket_manager = BucketManager(
+            bucket_file=self.bucket_file,
+            bsz=self.batch_size,
+            world_size=self.trainer.world_size,
+            global_rank=self.global_rank,
+            seed=self.seed,
+            divisible=2,
+            min_dim=32,
+            max_size=(64,64),
+            base_res=(64,64),
+            dim_limit=128
+        )
+        # Compute total_steps
+        self.total_steps = self.bucket_manager.batch_total * self.trainer.max_epochs
 
     def forward(self, x, t, mask):
         self.model(x, t, mask)
@@ -217,23 +298,53 @@ class LitMicroDiT(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=self.learning_rate, total_steps=self.trainer.estimated_stepping_batches
+            optimizer,
+            max_lr=self.learning_rate,
+            total_steps=self.total_steps
         )
 
         return {
-        "optimizer": optimizer,
-        "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
 
     def train_dataloader(self):
-        return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
+        # Load the dataset
+        dataset = load_dataset(
+            self.dataset_path,
+            split="train",
+            keep_in_memory=False,
+            cache_dir=None,
+        )
+
+        # Load the image_id to index mapping
+        with open(self.index_image_id_map_path, "r") as f:
+            index_image_id_map = json.load(f)
+
+        # Create the CustomDataset, pass the bucket_manager
+        dataset = CustomDataset(
+            dataset=dataset,
+            index_image_id_map=index_image_id_map,
+            bucket_manager=self.bucket_manager,
+        )
+
+        dataloader = DataLoader(
+            dataset,
+            batch_size=None,  # Batching is handled internally by the dataset
+            num_workers=0,    # Set to 0 to avoid multiprocessing issues
+        )
+        return dataloader
 
     def training_step(self, batch, batch_idx):
-        latents, prompt = batch
+        latents = batch["latents"]
+        caption_embeddings = batch["embeddings"]
+        prompts = batch["prompts"]
+        resolution = batch["resolution"]
+
         bs = latents.shape[0]
-        image_prompts = strings_to_tensor(prompt).to(self.device)
 
         latents = latents * SDXL_VAE_SCALING_FACTOR
+        latents = latents.reshape(bs, 4, resolution[0], resolution[1])
 
         mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
 
@@ -246,7 +357,7 @@ class LitMicroDiT(L.LightningModule):
         z1 = torch.randn_like(latents)
         zt = (1 - texp) * latents + texp * z1
         
-        vtheta = self.model(zt, t, image_prompts, mask)
+        vtheta = self.model(zt, t, caption_embeddings, mask)
 
         latents = apply_mask_to_tensor(latents, mask, self.model.patch_size)
         vtheta = apply_mask_to_tensor(vtheta, mask, self.model.patch_size)
@@ -255,6 +366,8 @@ class LitMicroDiT(L.LightningModule):
         batchwise_mse = ((z1 - latents - vtheta) ** 2).mean(dim=list(range(1, len(latents.shape))))
         loss = batchwise_mse.mean()
         loss = loss * 1 / (1 - self.mask_ratio)
+
+        self.log("Loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
         return loss
 

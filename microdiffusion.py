@@ -5,8 +5,8 @@ from transformer.microdit import LitMicroDiT, MicroDiT
 import os
 import lightning as L
 from lightning.pytorch.tuner import Tuner
-from lightning.pytorch.callbacks import StochasticWeightAveraging, ModelCheckpoint
-from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
+from torch.utils.data import DataLoader
 
 bs = 128
 input_dim = 4  # 4 channels in latent space
@@ -28,6 +28,7 @@ epochs = 5
 mask_ratio = 0.75
 
 train_ds = CelebAAttrsDataset("train")
+train_dl = DataLoader(train_ds, batch_size=bs, shuffle=True)
 # validation_ds = CelebAAttrsDataset("validation")
 # test_ds = CelebAAttrsDataset("test")
 
@@ -41,7 +42,7 @@ print("Number of parameters: ", sum(p.numel() for p in model.parameters()))
 
 print("Starting training...")
 
-model = LitMicroDiT(model, mask_ratio=mask_ratio, batch_size=bs, train_ds=train_ds)
+model = LitMicroDiT(model, mask_ratio=mask_ratio, train_dl=train_dl)
 
 checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=5)
 # swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
@@ -59,9 +60,13 @@ print("Training complete.")
 print("Starting finetuning...")
 
 finetuning_steps = model.trainer.estimated_stepping_batches * bs // 10
-model.batch_size = int(bs * (1-mask_ratio) * 0.5)
-finetuning_steps = finetuning_steps // model.batch_size
+bs = int(bs * (1-mask_ratio) * 0.5)
+finetuning_steps = finetuning_steps // bs
 model.mask_ratio = 0
+train_dl = DataLoader(train_ds, batch_size=bs, shuffle=True)
+model.train_dl = train_dl
+
+checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/finetuned/", every_n_epochs=1)
 
 trainer = L.Trainer(max_steps=finetuning_steps, callbacks=[checkpoint_callback])
 tuner = Tuner(trainer)

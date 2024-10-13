@@ -3,7 +3,6 @@ from torch.distributed import init_process_group, destroy_process_group
 import torch
 import os
 from datasets import load_dataset
-import datasets
 from datasets.distributed import split_dataset_by_node
 import numpy as np
 from PIL import Image
@@ -22,91 +21,22 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
-from torch.utils.data import DataLoader
 import json
 
 USERNAME = "KagakuAI"
 DATASET_NAME = "commoncatalog_cc_by_moondream_latents"
+METADATA_DATASET_NAME = "commoncatalog_cc_by_moondream_metadata"
 IMG_COLUMN_NAME = "jpg"
 IMAGE_ID_COLUMN_NAME = "key"
 BATCH_SIZE_PER_GPU = 8
 IMAGES_PER_PARQUET = BATCH_SIZE_PER_GPU * 100
 CACHE_DIR_BASE = "../.."
 
-"""
-One common issue of existing image generation models is that they are very prone to producing images with unnatural crops. This is due to the fact that these models are trained to produce square images. However, most photos and artworks are not square. However, the model can only work on images of the same size at the same time, and during training, it is common practice to operate on multiple training samples at once to optimize the efficiency of the GPUs used. As a compromise, square images are chosen, and during training, only the center of each image is cropped out and then shown to the image generation model as a training example.
-
-For example, humans are often generated without feet or heads, and swords consist of only a blade with a hilt and point outside the frame. As we are creating an image generation model to accompany our storytelling experience, it is important that our model is able to produce proper, uncropped characters, and generated knights should not be holding a metallic-looking straight line extending to infinity.
-
-Another issue with training on cropped images is that it can lead to a mismatch between the text and the image.
-
-For example, an image with a crown tag will often no longer contain a crown after a center crop is applied and the monarch has been, thereby, decapitated.
-
-Knight wearing a crown with darkened regions removed by the center crop
-
-We found that using random crops instead of center crops only slightly improves these issues.
-
-Using Stable Diffusion with variable image sizes is possible, although it can be noticed that going too far beyond the native resolution of 512x512 tends to introduce repeated image elements, and very low resolutions produce indiscernible images.
-
-Still, this indicated to us that training the model on variable sized images should be possible. Training on single, variable sized samples would be trivial, but also extremely slow and more liable to training instability due to the lack of regularization provided by the use of mini batches.
-
-Custom Batch Generation
-As no existing solution for this problem seems to exist, we have implemented custom batch generation code for our dataset that allows the creation of batches where every item in the batch has the same size, but the image size of batches may differ.
-
-We do this through a method we call aspect ratio bucketing. An alternative approach would be to use a fixed image size, scale each image to fit within this fixed size and apply padding that is masked out during training. Since this leads to unnecessary computation during training, we have not chosen to follow this alternative approach.
-
-In the following, we describe the original idea behind our custom batch generation scheme for aspect ratio bucketing.
-
-First, we have to define which buckets we want to sort the images of our dataset into. For this purpose, we define a maximum image size of 512x768 with a maximum dimension size of 1024. Since the maximum image size is 512x768, which is larger than 512x512 and requires more VRAM, per-GPU batch size has to be lowered, which can be compensated through gradient accumulation.
-
-We generate buckets by applying the following algorithm:
-
-Set the width to 256.
-While the width is less than or equal to 1024:
-Find the largest height such that height is less than or equal to 1024 and that width multiplied by height is less than or equal to 512 * 768.
-Add the resolution given by height and width as a bucket.
-Increase the width by 64.
-The same is repeated with width and height exchanged. Duplicated buckets are pruned from the list, and an additional bucket sized 512x512 is added.
-
-Next, we assign images to their corresponding buckets. For this purpose, we first store the bucket resolutions in a NumPy array and calculate the aspect ratio of each resolution. For each image in the dataset, we then retrieve its resolution and calculate the aspect ratio. The image aspect ratio is subtracted from the array of bucket aspect ratios, allowing us to efficiently select the closest bucket according to the absolute value of the difference between aspect ratios:
-
-image_bucket = argmin(abs(bucket_aspects — image_aspect))
-The image's bucket number is stored associated with its item ID in the dataset. If the image's aspect ratio is very extreme and too different from even the best-fitting bucket, the image is pruned from the dataset.
-
-Since we train on multiple GPUs, before each epoch, we shard the dataset to ensure that each GPU works on a distinct subset of equal size. To do this, we first copy the list of item IDs in the dataset and shuffle them. If this copied list is not divisible by the number of GPUs multiplied by the batch size, the list is trimmed, and the last items are dropped to make it divisible.
-
-We then select a distinct subset of 1/world_size*bsz item IDs according to the global rank of the current process. The rest of the custom batch generation will be described as seen from any single of these processes and operate on the subset of dataset item IDs.
-
-For the current shard, lists for each bucket are created by iterating over the list of shuffled dataset item IDs and assigning the ID to the list corresponding to the bucket that was assigned to the image.
-
-Once all images are processed, we iterate over the lists for each bucket. If its length is not divisible by the batch size, we remove the last elements on the list as necessary to make it divisible and add them to a separate catch-all bucket. As the overall shard size is guaranteed to contain a number of elements divisible by the batch size, doing is guaranteed to produce a catch-all bucket with a length divisible by the batch size as well.
-
-When a batch is requested, we randomly draw a bucket from a weighted distribution. The bucket weights are set as the size of the bucket divided by the size of all remaining buckets. This ensures that even with buckets of widely varying sizes, the custom batch generation does not introduce strong bias when during training, an image shows up according to image size. If buckets were chosen without weighting, small buckets would empty out early during the training process, and only the biggest buckets would remain towards the end of training. Weighting buckets by size avoids this.
-
-A batch of items is finally taken from the chosen bucket. The items taken are removed from the bucket. If the bucket is now empty, it is deleted for the rest of the epoch. The chosen item IDs and the chosen bucket's resolution are now passed to an image-loading function.
-
-Image Loading
-Note that image loading code is not part of this release but should be relatively easy to implement.
-
-Each item ID's image is loaded and processed to fit within the bucket resolution. For fitting the image, two approaches are possible.
-
-First, the image could be simply rescaled. This would lead to a slight distortion of the image. For this reason, we have opted for the second approach:
-
-The image is scaled, while preserving its aspect ratio, in such a way that it:
-
-Either fits the bucket resolution exactly if the aspect ratio happens to match
-or it extends past the bucket resolution on one dimension while fitting it exactly on the other.
-In the latter case, a random crop is applied.
-
-As we found that the mean aspect ratio error per image is only 0.033, these random crops only remove very little of the actual image, usually less than 32 pixels.
-
-The loaded and processed images are finally returned as the image part of the batch.
-"""
 def get_prng(seed):
     return np.random.RandomState(seed)
 
 class BucketManager:
-    def __init__(self, max_size=(512,512), divisible=16, step_size=8, min_dim=256, base_res=(512,512), bsz=64, world_size=1, global_rank=0, max_ar_error=4, seed=42, dim_limit=1024, debug=False):
+    def __init__(self, max_size=(512,512), divisible=16, min_dim=256, base_res=(512,512), bsz=64, world_size=1, global_rank=0, max_ar_error=4, seed=42, dim_limit=1024, debug=False):
         self.max_size = max_size
         self.f = 8
         self.max_tokens = (max_size[0]/self.f) * (max_size[1]/self.f)
@@ -129,20 +59,6 @@ class BucketManager:
         self.debug = debug
 
         self.gen_buckets()
-
-    def load_res_map(self, bucket_file, valid_ids=None):
-        with open(bucket_file, "rb") as fh:
-            self.res_map = pickle.load(fh)
-        if valid_ids is not None:
-            new_res_map = {}
-            valid_ids = set(valid_ids)
-            for k, v in self.res_map.items():
-                if k in valid_ids:
-                    new_res_map[k] = v
-            self.res_map = new_res_map
-
-        self.assign_buckets()
-        self.start_epoch()
 
     def gen_buckets(self):
         if self.debug:
@@ -186,150 +102,11 @@ class BucketManager:
             print(f"aspects:\n{self.aspects}")
             print(f"gen_buckets: {timer:.5f}s")
 
-    def assign_buckets(self):
-        if self.debug:
-            timer = time.perf_counter()
-        self.buckets = {}
-        self.aspect_errors = []
-        skipped = 0
-        skip_list = []
-        for post_id in self.res_map.keys():
-            w, h = self.res_map[post_id]
-            aspect = float(w)/float(h)
-            bucket_id = np.abs(np.log(self.aspects) - np.log(aspect)).argmin()
-            if bucket_id not in self.buckets:
-                self.buckets[bucket_id] = []
-            error = abs(self.aspects[bucket_id] - aspect)
-            if error < self.max_ar_error:
-                self.buckets[bucket_id].append(post_id)
-                if self.debug:
-                    self.aspect_errors.append(error)
-            else:
-                skipped += 1
-                skip_list.append(post_id)
-        for post_id in skip_list:
-            del self.res_map[post_id]
-        if self.debug:
-            timer = time.perf_counter() - timer
-            self.aspect_errors = np.array(self.aspect_errors)
-            print(f"skipped images: {skipped}")
-            print(f"aspect error: mean {self.aspect_errors.mean()}, median {np.median(self.aspect_errors)}, max {self.aspect_errors.max()}")
-            for bucket_id in reversed(sorted(self.buckets.keys(), key=lambda b: len(self.buckets[b]))):
-                print(f"bucket {bucket_id}: {self.resolutions[bucket_id]}, aspect {self.aspects[bucket_id]:.5f}, entries {len(self.buckets[bucket_id])}")
-            print(f"assign_buckets: {timer:.5f}s")
-
     def get_ideal_resolution(self, image_size) -> tuple[int, int]:
         w, h = image_size
         aspect = float(w)/float(h)
         bucket_id = np.abs(np.log(self.aspects) - np.log(aspect)).argmin()
         return self.resolutions[bucket_id]
-
-    def start_epoch(self, world_size=None, global_rank=None):
-        if self.debug:
-            timer = time.perf_counter()
-        if world_size is not None:
-            self.world_size = world_size
-        if global_rank is not None:
-            self.global_rank = global_rank
-
-        # select ids for this epoch/rank
-        index = np.array(sorted(list(self.res_map.keys())))
-        index_len = index.shape[0]
-        index = self.epoch_prng.permutation(index)
-        index = index[:index_len - (index_len % (self.bsz * self.world_size))]
-        #print("perm", self.global_rank, index[0:16])
-        index = index[self.global_rank::self.world_size]
-        self.batch_total = index.shape[0] // self.bsz
-        assert(index.shape[0] % self.bsz == 0)
-        index = set(index)
-
-        self.epoch = {}
-        self.left_over = []
-        self.batch_delivered = 0
-        for bucket_id in sorted(self.buckets.keys()):
-            if len(self.buckets[bucket_id]) > 0:
-                self.epoch[bucket_id] = np.array([post_id for post_id in self.buckets[bucket_id] if post_id in index], dtype=np.int64)
-                self.prng.shuffle(self.epoch[bucket_id])
-                self.epoch[bucket_id] = list(self.epoch[bucket_id])
-                overhang = len(self.epoch[bucket_id]) % self.bsz
-                if overhang != 0:
-                    self.left_over.extend(self.epoch[bucket_id][:overhang])
-                    self.epoch[bucket_id] = self.epoch[bucket_id][overhang:]
-                if len(self.epoch[bucket_id]) == 0:
-                    del self.epoch[bucket_id]
-
-        if self.debug:
-            timer = time.perf_counter() - timer
-            count = 0
-            for bucket_id in self.epoch.keys():
-                count += len(self.epoch[bucket_id])
-            print(f"correct item count: {count == len(index)} ({count} of {len(index)})")
-            print(f"start_epoch: {timer:.5f}s")
-
-    def get_batch(self):# -> tuple[Any | list | None, Any | tuple[Any, ...]]:
-        if self.debug:
-            timer = time.perf_counter()
-        # check if no data left or no epoch initialized
-        if self.epoch is None or self.left_over is None or (len(self.left_over) == 0 and not bool(self.epoch)) or self.batch_total == self.batch_delivered:
-            self.start_epoch()
-
-        found_batch = False
-        batch_data = None
-        resolution = self.base_res
-        while not found_batch:
-            bucket_ids = list(self.epoch.keys())
-            if len(self.left_over) >= self.bsz:
-                bucket_probs = [len(self.left_over)] + [len(self.epoch[bucket_id]) for bucket_id in bucket_ids]
-                bucket_ids = [-1] + bucket_ids
-            else:
-                bucket_probs = [len(self.epoch[bucket_id]) for bucket_id in bucket_ids]
-            bucket_probs = np.array(bucket_probs, dtype=np.float32)
-            bucket_lens = bucket_probs
-            bucket_probs = bucket_probs / bucket_probs.sum()
-            bucket_ids = np.array(bucket_ids, dtype=np.int64)
-            if bool(self.epoch):
-                chosen_id = int(self.prng.choice(bucket_ids, 1, p=bucket_probs)[0])
-            else:
-                chosen_id = -1
-
-            if chosen_id == -1:
-                # using leftover images that couldn't make it into a bucketed batch and returning them for use with basic square image
-                self.prng.shuffle(self.left_over)
-                batch_data = self.left_over[:self.bsz]
-                self.left_over = self.left_over[self.bsz:]
-                found_batch = True
-            else:
-                if len(self.epoch[chosen_id]) >= self.bsz:
-                    # return bucket batch and resolution
-                    batch_data = self.epoch[chosen_id][:self.bsz]
-                    self.epoch[chosen_id] = self.epoch[chosen_id][self.bsz:]
-                    resolution = tuple(self.resolutions[chosen_id])
-                    found_batch = True
-                    if len(self.epoch[chosen_id]) == 0:
-                        del self.epoch[chosen_id]
-                else:
-                    # can't make a batch from this, not enough images. move them to leftovers and try again
-                    self.left_over.extend(self.epoch[chosen_id])
-                    del self.epoch[chosen_id]
-
-            assert(found_batch or len(self.left_over) >= self.bsz or bool(self.epoch))
-
-        if self.debug:
-            timer = time.perf_counter() - timer
-            print(f"bucket probs: " + ", ".join(map(lambda x: f"{x:.2f}", list(bucket_probs*100))))
-            print(f"chosen id: {chosen_id}")
-            print(f"batch data: {batch_data}")
-            print(f"resolution: {resolution}")
-            print(f"get_batch: {timer:.5f}s")
-
-        self.batch_delivered += 1
-        return (batch_data, resolution)
-
-    def generator(self):
-        if self.batch_delivered >= self.batch_total:
-            self.start_epoch()
-        while self.batch_delivered < self.batch_total:
-            yield self.get_batch()
 
 def resize_and_crop(image, target_size):
     # image: PIL Image
@@ -539,8 +316,8 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
     # Wait for all uploads to complete
     executor.shutdown(wait=True)
 
-    resmap_dir = f"{CACHE_DIR_BASE}/datasets/commoncatalog_cc_by_moondream_captions/res_maps"
-    caption_dir = f"{CACHE_DIR_BASE}/datasets/commoncatalog_cc_by_moondream_captions/captions"
+    resmap_dir = f"{CACHE_DIR_BASE}/datasets/{METADATA_DATASET_NAME}/res_maps"
+    caption_dir = f"{CACHE_DIR_BASE}/datasets/{METADATA_DATASET_NAME}/captions"
     os.makedirs(resmap_dir, exist_ok=True)
     os.makedirs(caption_dir, exist_ok=True)
 
@@ -552,21 +329,38 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
     with open(f"{caption_dir}/{rank}_captions.json", "w+") as fh:
         json.dump(image_id_caption_map, fh)
 
+    destroy_process_group()
+
+def merge_res_and_caption_maps(filepath, world_size, api):
+    """
+    Merges the all the ranks' res_maps to a single file, and the all the ranks' captions to another single file.
+    """
+    res_map = {}
+    captions = {}
+    for i in range(world_size):
+        with open(f"{filepath}/res_maps/{i}_res_map.json", "r") as fh:
+            res_map.update(json.load(fh))
+        with open(f"{filepath}/captions/{i}_captions.json", "r") as fh:
+            captions.update(json.load(fh))
+
+    with open(f"{filepath}/res_map.json", "w") as fh:
+        json.dump(res_map, fh)
+    with open(f"{filepath}/captions.json", "w") as fh:
+        json.dump(captions, fh)
+
     # Upload res and caption maps
     api.upload_file(
-        path_or_fileobj=f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/resmaps/{rank}_res_map.json",
-        path_in_repo=f"res_maps/{rank}_res_map.json",
-        repo_id=f"{USERNAME}/commoncatalog_cc_by_moondream_captions",
+        path_or_fileobj=f"{filepath}/res_map.json",
+        path_in_repo=f"res_map.json",
+        repo_id=f"{USERNAME}/{METADATA_DATASET_NAME}",
         repo_type="dataset",
     )
     api.upload_file(
-        path_or_fileobj=f"{caption_dir}/captions/{rank}_caption_map.json",
-        path_in_repo=f"captions/{rank}_captions.json",
-        repo_id=f"{USERNAME}/commoncatalog_cc_by_moondream_captions",
+        path_or_fileobj=f"{filepath}/captions.json",
+        path_in_repo=f"captions.json",
+        repo_id=f"{USERNAME}/{METADATA_DATASET_NAME}",
         repo_type="dataset",
     )
-
-    destroy_process_group()
 
 def preprocess_datasets_main(test=False):
     world_size = torch.cuda.device_count()
@@ -582,7 +376,7 @@ def preprocess_datasets_main(test=False):
 
     bucket_manager = BucketManager()
     api = HfApi()
-    api.create_repo(repo_id=f"{USERNAME}/{DATASET_NAME}", repo_type="dataset", exist_ok=True)
+    api.create_repo(repo_id=f"{USERNAME}/{METADATA_DATASET_NAME}", repo_type="dataset", exist_ok=True)
 
     model_id = "vikhyatk/moondream2"
     revision = "2024-07-23"
@@ -593,6 +387,7 @@ def preprocess_datasets_main(test=False):
 
     mp.spawn(process_images, args=(world_size, dataset, vae, siglip_model, siglip_tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer), nprocs=world_size)
 
+    merge_res_and_caption_maps(f"{CACHE_DIR_BASE}/datasets/{METADATA_DATASET_NAME}", world_size, api)
 
 if __name__ == "__main__":
     preprocess_datasets_main(test=True)
