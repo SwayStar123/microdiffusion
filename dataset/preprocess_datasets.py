@@ -22,15 +22,8 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
 import json
-
-USERNAME = "KagakuAI"
-DATASET_NAME = "commoncatalog_cc_by_moondream_latents"
-METADATA_DATASET_NAME = "commoncatalog_cc_by_moondream_metadata"
-IMG_COLUMN_NAME = "jpg"
-IMAGE_ID_COLUMN_NAME = "key"
-BATCH_SIZE_PER_GPU = 8
-IMAGES_PER_PARQUET = BATCH_SIZE_PER_GPU * 100
-CACHE_DIR_BASE = "../.."
+from config import (USERNAME, DATASET_NAME, METADATA_DATASET_NAME, IMG_COLUMN_NAME, IMAGE_ID_COLUMN_NAME, PREPROCESS_BS_PER_GPU, IMAGES_PER_PARQUET,
+DS_DIR_BASE, MODELS_DIR_BASE, VAE_HF_NAME, SIGLIP_HF_NAME)
 
 def get_prng(seed):
     return np.random.RandomState(seed)
@@ -245,7 +238,7 @@ def write_parquet(latents_list, latents_parquet_file, latents_schema):
 
 def process_images(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer):
     ddp_setup(rank, world_size)
-    dataset = split_dataset_by_node(dataset, rank, world_size).batch(BATCH_SIZE_PER_GPU)
+    dataset = split_dataset_by_node(dataset, rank, world_size).batch(PREPROCESS_BS_PER_GPU)
 
     device = torch.device(f'cuda:{rank}')
     vae = vae.to(device)
@@ -260,7 +253,7 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
     latents_schema = create_schema()
 
     # Create directories if they don't exist
-    latents_dir = f"{CACHE_DIR_BASE}/datasets/{DATASET_NAME}/{rank}/latents"
+    latents_dir = f"{DS_DIR_BASE}/{DATASET_NAME}/{rank}/latents"
     os.makedirs(latents_dir, exist_ok=True)
     index = 0
 
@@ -270,9 +263,9 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
             # Calculate latents and embeddings
             latents, text_embeddings, captions = calculate_latents_and_embeddings(batch, vae, siglip_model, tokenizer, device, bucket_manager, moondream_model, moondream_tokenizer)
             image_ids = batch[IMAGE_ID_COLUMN_NAME]
-            assert len(latents) == BATCH_SIZE_PER_GPU, f"Latents length mismatch: {len(latents)} != {BATCH_SIZE_PER_GPU}"
-            assert len(text_embeddings) == BATCH_SIZE_PER_GPU, f"Text embeddings length mismatch: {len(text_embeddings)} != {BATCH_SIZE_PER_GPU}"
-            assert len(captions) == BATCH_SIZE_PER_GPU, f"Captions length mismatch: {len(captions)} != {BATCH_SIZE_PER_GPU}"
+            assert len(latents) == PREPROCESS_BS_PER_GPU, f"Latents length mismatch: {len(latents)} != {PREPROCESS_BS_PER_GPU}"
+            assert len(text_embeddings) == PREPROCESS_BS_PER_GPU, f"Text embeddings length mismatch: {len(text_embeddings)} != {PREPROCESS_BS_PER_GPU}"
+            assert len(captions) == PREPROCESS_BS_PER_GPU, f"Captions length mismatch: {len(captions)} != {PREPROCESS_BS_PER_GPU}"
 
             for image_id, latent, text_embedding, caption in zip(image_ids, latents, text_embeddings, captions):
                 image_id_res_map[image_id] = latent.shape[1:]
@@ -288,7 +281,7 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
                 })
 
             # Write Parquet files after reaching the IMAGES_PER_PARQUET threshold
-            if (i + 1) % (IMAGES_PER_PARQUET//BATCH_SIZE_PER_GPU) == 0:
+            if (i + 1) % (IMAGES_PER_PARQUET//PREPROCESS_BS_PER_GPU) == 0:
                 latents_parquet_file = f"{latents_dir}/{index}_latents.parquet"
 
                 write_parquet(latents_list, latents_parquet_file, latents_schema)
@@ -301,7 +294,7 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
                 latents_list.clear()
                 index += 1
 
-            progress_bar.update(BATCH_SIZE_PER_GPU * world_size)
+            progress_bar.update(PREPROCESS_BS_PER_GPU * world_size)
 
         # Handle remaining data after loop ends
         if latents_list:
@@ -316,8 +309,8 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
     # Wait for all uploads to complete
     executor.shutdown(wait=True)
 
-    resmap_dir = f"{CACHE_DIR_BASE}/datasets/{METADATA_DATASET_NAME}/res_maps"
-    caption_dir = f"{CACHE_DIR_BASE}/datasets/{METADATA_DATASET_NAME}/captions"
+    resmap_dir = f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}/res_maps"
+    caption_dir = f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}/captions"
     os.makedirs(resmap_dir, exist_ok=True)
     os.makedirs(caption_dir, exist_ok=True)
 
@@ -370,9 +363,9 @@ def preprocess_datasets_main(test=False):
     else:
         dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"])
 
-    vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", cache_dir=f"{CACHE_DIR_BASE}/models/vae")
-    siglip_model, preprocess = create_model_from_pretrained('hf-hub:timm/ViT-SO400M-14-SigLIP-384', cache_dir=f"{CACHE_DIR_BASE}/models/siglip")
-    siglip_tokenizer = get_tokenizer('hf-hub:timm/ViT-SO400M-14-SigLIP-384', cache_dir=f"{CACHE_DIR_BASE}/models/siglip")
+    vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
+    siglip_model, preprocess = create_model_from_pretrained(f'{SIGLIP_HF_NAME}', cache_dir=f"{MODELS_DIR_BASE}/siglip")
+    siglip_tokenizer = get_tokenizer(f'{SIGLIP_HF_NAME}', cache_dir=f"{MODELS_DIR_BASE}/siglip")
 
     bucket_manager = BucketManager()
     api = HfApi()
@@ -381,13 +374,13 @@ def preprocess_datasets_main(test=False):
     model_id = "vikhyatk/moondream2"
     revision = "2024-07-23"
     moondream_model = AutoModelForCausalLM.from_pretrained(
-        model_id, trust_remote_code=True, revision=revision, cache_dir=f"{CACHE_DIR_BASE}/models/moondream"
+        model_id, trust_remote_code=True, revision=revision, cache_dir=f"{MODELS_DIR_BASE}/moondream"
     )
-    moondream_tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, cache_dir=f"{CACHE_DIR_BASE}/models/moondream")
+    moondream_tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, cache_dir=f"{MODELS_DIR_BASE}/moondream")
 
     mp.spawn(process_images, args=(world_size, dataset, vae, siglip_model, siglip_tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer), nprocs=world_size)
 
-    merge_res_and_caption_maps(f"{CACHE_DIR_BASE}/datasets/{METADATA_DATASET_NAME}", world_size, api)
+    merge_res_and_caption_maps(f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}", world_size, api)
 
 if __name__ == "__main__":
     preprocess_datasets_main(test=True)

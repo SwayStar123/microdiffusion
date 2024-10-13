@@ -1,6 +1,6 @@
 import torch.nn as nn
 from .embed import PatchEmbed, get_2d_sincos_pos_embed
-from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify, strings_to_tensor, apply_mask_to_tensor
+from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify, apply_mask_to_tensor
 from .backbone import TransformerBackbone
 from .moedit import TimestepEmbedder
 import lightning as L
@@ -12,11 +12,9 @@ import glob
 import torch
 import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset, DataLoader
-from torch.distributed import is_initialized, get_world_size, get_rank
 from dataset.bucket_manager import BucketManager
 from datasets import load_dataset
-
-SDXL_VAE_SCALING_FACTOR = 0.13025
+from config import VAE_SCALING_FACTOR, DS_DIR_BASE, METADATA_DATASET_NAME, DATASET_NAME
 
 class PatchMixer(nn.Module):
     def __init__(self, embed_dim, num_heads, num_layers=2):
@@ -259,9 +257,9 @@ class CustomDataset(IterableDataset):
 
 class LitMicroDiT(L.LightningModule):
     def __init__(self, model, batch_size=1, seed=0, learning_rate=1e-4,
-                ln=True, mask_ratio=0.5, dataset_path="../../datasets/commoncatalog_cc_by_moondream_latents",
-                bucket_file = "../../datasets/commoncatalog_cc_by_moondream_metadata/res_map.json",
-                index_image_id_map_path="../../datasets/commoncatalog_cc_by_moondream_metadata/image_id_map.json"):
+                ln=True, mask_ratio=0.5, dataset_path=f"{DS_DIR_BASE}/{DATASET_NAME}",
+                bucket_file = f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}/res_map.json",
+                index_image_id_map_path=f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}/image_id_map.json"):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
@@ -342,7 +340,7 @@ class LitMicroDiT(L.LightningModule):
 
         bs = latents.shape[0]
 
-        latents = latents * SDXL_VAE_SCALING_FACTOR
+        latents = latents * VAE_SCALING_FACTOR
         latents = latents.reshape(bs, 4, resolution[0], resolution[1])
 
         mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
@@ -387,4 +385,4 @@ class LitMicroDiT(L.LightningModule):
 
             z = z - dt * vc
             images.append(z)
-        return (images[-1] / SDXL_VAE_SCALING_FACTOR)
+        return (images[-1] / VAE_SCALING_FACTOR)

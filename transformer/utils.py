@@ -72,25 +72,6 @@ def unpatchify(x, patch_size, height, width):
 
     return reconstructed
 
-def strings_to_tensor(string_list):
-    """
-    Converts a list of strings, each representing a list (e.g., "[1, 2, 3]"), 
-    into a PyTorch tensor.
-
-    Args:
-        string_list (list of str): A list of strings, where each string is a list in string form.
-
-    Returns:
-        torch.Tensor: A PyTorch tensor containing the data from the lists.
-    """
-    # Convert each string to a list using eval
-    list_of_lists = [eval(s) for s in string_list]
-    
-    # Convert the list of lists to a PyTorch tensor
-    tensor = torch.tensor(list_of_lists, dtype=torch.float32)
-    
-    return tensor
-
 def random_mask(bs: int, height: int, width: int, patch_size: tuple[int, int], mask_ratio: float) -> torch.Tensor:
     """
     Generates a random mask for patched images. Randomly selects patches to mask.
