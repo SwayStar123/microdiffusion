@@ -1,0 +1,9 @@
+lightning
+datasets
+diffusers
+transformers
+timm
+open-clip-torch
+pyarrow
+accelerate
+einops

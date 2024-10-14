@@ -175,7 +175,7 @@ def calculate_latents_and_embeddings(batch, vae, siglip_model, siglip_tokenizer,
 
         captions = moondream_model.batch_answer(
             images=imgs,
-            captions=["Caption this image."] * len(imgs),
+            prompts=["Caption this image."] * len(imgs),
             tokenizer=moondream_tokenizer,
         )
         captions_list = [caption for caption in captions]
@@ -294,7 +294,8 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
                 latents_list.clear()
                 index += 1
 
-            progress_bar.update(PREPROCESS_BS_PER_GPU * world_size)
+            if progress_bar is not None:
+                progress_bar.update(PREPROCESS_BS_PER_GPU * world_size)
 
         # Handle remaining data after loop ends
         if latents_list:
