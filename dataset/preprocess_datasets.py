@@ -223,27 +223,23 @@ def write_parquet(latents_list, latents_parquet_file, latents_schema):
 
     pq.write_table(latents_table, latents_parquet_file)
 
-# def upload_and_delete_files(api, latents_parquet_file, rank, index):
-#     print(f"Uploading parquet for rank {rank} and index {index}")
-#     # Upload files
-#     api.upload_file(
-#         path_or_fileobj=latents_parquet_file,
-#         path_in_repo=f"{rank}/latents/{index}_latents.parquet",
-#         repo_id=f"{USERNAME}/{DATASET_NAME}",
-#         repo_type="dataset",
-#     )
 
-#     # Delete local files
-#     os.remove(latents_parquet_file)
-
-def process_images(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer):
+def process_images(rank: int, world_size: int, dataset, vae, siglip_model, tokenizer, bucket_manager):
     ddp_setup(rank, world_size)
     dataset = split_dataset_by_node(dataset, rank, world_size).batch(PREPROCESS_BS_PER_GPU)
 
     device = torch.device(f'cuda:{rank}')
-    vae = vae.to(device)
-    siglip_model = siglip_model.to(device)
-    moondream_model = moondream_model.to(device)
+    vae = torch.compile(vae.to(device))
+    siglip_model = torch.compile(siglip_model.to(device))
+
+    model_id = "vikhyatk/moondream2"
+    revision = "2024-07-23"
+    moondream_model = AutoModelForCausalLM.from_pretrained(
+        model_id, trust_remote_code=True, revision=revision, cache_dir=f"{MODELS_DIR_BASE}/moondream"
+    )
+    moondream_tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, cache_dir=f"{MODELS_DIR_BASE}/moondream")
+
+    moondream_model = torch.compile(moondream_model.to(device))
 
     image_id_res_map = {}
     image_id_caption_map = {}
@@ -286,10 +282,6 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
 
                 write_parquet(latents_list, latents_parquet_file, latents_schema)
 
-                # Submit the upload and delete task to the executor
-                # Hugging face didnt increase repo limit so cant upload. Save dataset locally instead.
-                # executor.submit(upload_and_delete_files, api, latents_parquet_file, rank, index)
-
                 # Clear the lists for the next batch
                 latents_list.clear()
                 index += 1
@@ -302,10 +294,6 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
             latents_parquet_file = f"{latents_dir}/{index}_latents.parquet"
 
             write_parquet(latents_list, latents_parquet_file, latents_schema)
-
-            # Submit the upload and delete task to the executor
-            # Hugging face didnt increase repo limit so cant upload. Save dataset locally instead.
-            # executor.submit(upload_and_delete_files, api, latents_parquet_file, rank, index)
 
     # Wait for all uploads to complete
     executor.shutdown(wait=True)
@@ -360,9 +348,9 @@ def preprocess_datasets_main(test=False):
     world_size = torch.cuda.device_count()
 
     if test:
-        dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"]).take(1000)
+        dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"], data_dir="0/least_dim_range=512-768", cache_dir=f"{DS_DIR_BASE}/commoncatalog_cc_by").take(1000)
     else:
-        dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", streaming=True, columns=["key", "jpg"])
+        dataset = load_dataset("common-canvas/commoncatalog-cc-by", split="train", columns=["key", "jpg"], cache_dir=f"{DS_DIR_BASE}/commoncatalog_cc_by")
 
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
     siglip_model, preprocess = create_model_from_pretrained(f'{SIGLIP_HF_NAME}', cache_dir=f"{MODELS_DIR_BASE}/siglip")
@@ -372,14 +360,7 @@ def preprocess_datasets_main(test=False):
     api = HfApi()
     api.create_repo(repo_id=f"{USERNAME}/{METADATA_DATASET_NAME}", repo_type="dataset", exist_ok=True)
 
-    model_id = "vikhyatk/moondream2"
-    revision = "2024-07-23"
-    moondream_model = AutoModelForCausalLM.from_pretrained(
-        model_id, trust_remote_code=True, revision=revision, cache_dir=f"{MODELS_DIR_BASE}/moondream"
-    )
-    moondream_tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, cache_dir=f"{MODELS_DIR_BASE}/moondream")
-
-    mp.spawn(process_images, args=(world_size, dataset, vae, siglip_model, siglip_tokenizer, bucket_manager, api, moondream_model, moondream_tokenizer), nprocs=world_size)
+    mp.spawn(process_images, args=(world_size, dataset, vae, siglip_model, siglip_tokenizer, bucket_manager), nprocs=world_size)
 
     merge_res_and_caption_maps(f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}", world_size, api)
 

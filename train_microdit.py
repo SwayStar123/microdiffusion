@@ -6,10 +6,12 @@ from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
 from config import BS, MODELS_DIR_BASE, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME
 from config import DIT_B as DIT
+from dataset.preprocess_datasets import preprocess_datasets_main
+from dataset.index_image_id_map import index_image_id_map_main
 
 if __name__ == "__main__":
-    # preprocess_datasets_main(test=True)
-    # index_image_id_map_main()
+    preprocess_datasets_main(test=True)
+    index_image_id_map_main()
 
     input_dim = VAE_CHANNELS  # 4 channels in latent space
     patch_size = (2, 2)
