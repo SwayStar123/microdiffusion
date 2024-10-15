@@ -23,7 +23,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
 import json
 from config import (USERNAME, DATASET_NAME, METADATA_DATASET_NAME, IMG_COLUMN_NAME, IMAGE_ID_COLUMN_NAME, PREPROCESS_BS_PER_GPU, IMAGES_PER_PARQUET,
-DS_DIR_BASE, MODELS_DIR_BASE, VAE_HF_NAME, SIGLIP_HF_NAME)
+DS_DIR_BASE, MODELS_DIR_BASE, VAE_HF_NAME, SIGLIP_HF_NAME, MP_BACKEND)
 
 def get_prng(seed):
     return np.random.RandomState(seed)
@@ -150,7 +150,7 @@ def ddp_setup(rank: int, world_size: int):
     os.environ["MASTER_ADDR"] = addr
     os.environ["MASTER_PORT"] = port
 
-    init_process_group(backend="gloo", rank=rank, world_size=world_size, init_method=f"tcp://{addr}:{port}?use_libuv=0")
+    init_process_group(backend=f"{MP_BACKEND}", rank=rank, world_size=world_size, init_method=f"tcp://{addr}:{port}?use_libuv=0")
 
 def calculate_latents_and_embeddings(batch, vae, siglip_model, siglip_tokenizer, device, bucket_manager, moondream_model, moondream_tokenizer):
     """Function to calculate latents and embeddings for a given image."""

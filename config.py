@@ -18,6 +18,8 @@ VAE_CHANNELS = 4
 SIGLIP_HF_NAME = "hf-hub:timm/ViT-SO400M-14-SigLIP-384"
 SIGLIP_EMBED_DIM = 1152
 
+MP_BACKEND="gloo"
+
 DIT_G = dict(
     num_layers=40,
     num_heads=16,
