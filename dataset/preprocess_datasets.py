@@ -253,7 +253,7 @@ def process_images(rank: int, world_size: int, dataset, vae, siglip_model, token
     os.makedirs(latents_dir, exist_ok=True)
     index = 0
 
-    with torch.no_grad(), torch.amp.autocast(device_type="cuda"):
+    with torch.no_grad(), torch.amp.autocast(device_type="cuda", dtype=torch.float16):
         progress_bar = tqdm(desc=f"Approximate processed", unit="img") if rank == 0 else None
         for i, batch in enumerate(dataset):
             # Calculate latents and embeddings

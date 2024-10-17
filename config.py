@@ -9,7 +9,7 @@ DS_DIR_BASE = "../../datasets"
 MODELS_DIR_BASE = "../../models"
 VAE_SCALING_FACTOR = 0.13025
 
-BS = 32
+BS = 16
 EPOCHS = 5
 MASK_RATIO = 0.75
 
