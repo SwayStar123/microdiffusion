@@ -36,6 +36,14 @@ if __name__ == "__main__":
     datamodule.setup()  # Ensure datasets are loaded
     examples = datamodule.datasets[0][:9]
 
+    is_distributed = world_size > 1
+
+    if is_distributed:
+        # In distributed training, each GPU gets a portion of the batches
+        total_batches = sum(datamodule.batches_per_dataset) // world_size
+    else:
+        total_batches = sum(datamodule.batches_per_dataset)
+
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
 
     model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
@@ -47,7 +55,7 @@ if __name__ == "__main__":
 
     print("Starting training...")
 
-    model = LitMicroDiT(model, vae=vae, examples=examples, mask_ratio=MASK_RATIO)
+    model = LitMicroDiT(model, vae=vae, examples=examples, epochs=EPOCHS, steps_per_epoch=total_batches, mask_ratio=MASK_RATIO)
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 

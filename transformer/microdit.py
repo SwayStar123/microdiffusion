@@ -208,7 +208,7 @@ class MicroDiT(nn.Module):
         return x
 
 class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, vae, examples, learning_rate=1e-4,
+    def __init__(self, model, vae, examples, epochs, steps_per_epoch, learning_rate=1e-4,
                 ln=True, mask_ratio=0.5):
         super().__init__()
         self.model = model
@@ -219,6 +219,8 @@ class LitMicroDiT(L.LightningModule):
         self.noise = torch.randn(9, 4, 64, 64)
         self.resolution_callback = ResolutionSamplingCallback()
         self.vae = vae
+        self.epochs = epochs
+        self.steps_per_epoch = steps_per_epoch
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
@@ -227,9 +229,10 @@ class LitMicroDiT(L.LightningModule):
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.learning_rate,
-            epochs=self.trainer.max_epochs,
-            steps_per_epoch=len(self.trainer.train_dataloader),
+            epochs=self.epochs,
+            steps_per_epoch=len(self.steps_per_epoch),
         )
+
 
         return {
             "optimizer": optimizer,
