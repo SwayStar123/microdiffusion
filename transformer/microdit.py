@@ -208,14 +208,13 @@ class MicroDiT(nn.Module):
         return x
 
 class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, vae, examples, epochs, batch_size, num_workers=0, seed=42, learning_rate=1e-4,
+    def __init__(self, model, vae, epochs, batch_size, num_workers=16, seed=42, learning_rate=1e-4,
                 ln=True, mask_ratio=0.5):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
         self.ln = ln
         self.mask_ratio = mask_ratio
-        self.examples = examples
         self.noise = torch.randn(9, 4, 64, 64)
         self.vae = vae
         self.epochs = epochs

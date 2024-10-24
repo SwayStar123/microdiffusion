@@ -4,7 +4,7 @@ from transformer.microdit import LitMicroDiT, MicroDiT
 import lightning as L
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
-from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE
+from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, SEED
 from config import DIT_B as DIT
 
 if __name__ == "__main__":
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     print("Starting training...")
 
-    model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, mask_ratio=MASK_RATIO)
+    model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO)
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
