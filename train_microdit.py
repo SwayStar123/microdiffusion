@@ -6,6 +6,7 @@ from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
 from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, SEED
 from config import DIT_B as DIT
+from torch.amp import autocast
 
 if __name__ == "__main__":
     input_dim = VAE_CHANNELS  # 4 channels in latent space
@@ -36,14 +37,15 @@ if __name__ == "__main__":
 
     print("Starting training...")
 
-    model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO)
+    with autocast(device_type="cuda", dtype=torch.float16):
+        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO)
 
-    checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
+        checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
-    trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback], precision="16-mixed")
-    tuner = Tuner(trainer)
-    tuner.lr_find(model)
+        trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback], precision="16-mixed")
+        tuner = Tuner(trainer)
+        tuner.lr_find(model)
 
-    trainer.fit(model=model)
+        trainer.fit(model=model)
 
     print("Training complete.")
