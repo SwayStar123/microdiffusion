@@ -208,7 +208,7 @@ class MicroDiT(nn.Module):
         return x
 
 class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, examples, learning_rate=1e-4,
+    def __init__(self, model, vae, examples, learning_rate=1e-4,
                 ln=True, mask_ratio=0.5):
         super().__init__()
         self.model = model
@@ -218,6 +218,7 @@ class LitMicroDiT(L.LightningModule):
         self.examples = examples[:9]
         self.noise = torch.randn(9, 4, 64, 64)
         self.resolution_callback = ResolutionSamplingCallback()
+        self.vae = vae
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
@@ -300,9 +301,12 @@ class LitMicroDiT(L.LightningModule):
         caption_embeddings = [example["embeddings"] for example in self.examples]
         caption_embeddings = torch.stack(caption_embeddings).to(self.device)
         
-        # Sample images
-        sampled_images = self.sample(noise, caption_embeddings)
+        # Sample latents
+        sampled_latents = self.sample(noise, caption_embeddings)
         
+        # Decode latents to images
+        sampled_images = self.vae.decode(sampled_latents).sample
+
         # Log the sampled images
         grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
         self.logger.experiment.add_image("Sampled Images", grid, self.current_epoch)

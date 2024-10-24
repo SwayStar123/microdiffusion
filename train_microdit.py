@@ -4,7 +4,7 @@ from transformer.microdit import LitMicroDiT, MicroDiT
 import lightning as L
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
-from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, SEED
+from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, SEED, VAE_HF_NAME, MODELS_DIR_BASE
 from config import DIT_B as DIT
 from dataset.commoncatalog import CommonCatalogDataModule
 
@@ -36,6 +36,8 @@ if __name__ == "__main__":
     datamodule.setup()  # Ensure datasets are loaded
     examples = datamodule.datasets[0][:9]
 
+    vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
+
     model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
                     num_heads, mlp_dim, caption_embed_dim, timestep_caption_embed_dim,
                     pos_embed_dim, num_experts, active_experts,
@@ -45,7 +47,7 @@ if __name__ == "__main__":
 
     print("Starting training...")
 
-    model = LitMicroDiT(model, examples=examples, mask_ratio=MASK_RATIO)
+    model = LitMicroDiT(model, vae=vae, examples=examples, mask_ratio=MASK_RATIO)
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
