@@ -36,10 +36,6 @@ if __name__ == "__main__":
     datamodule.setup()  # Ensure datasets are loaded
     examples = datamodule.datasets[0][:9]
 
-    is_distributed = world_size > 1
-
-
-
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
 
     model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
@@ -55,10 +51,10 @@ if __name__ == "__main__":
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
-    trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback, model.resolution_callback], precision="16-mixed")
+    trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback], precision="16-mixed")
     tuner = Tuner(trainer)
-    tuner.lr_find(model)
+    tuner.lr_find(model, model.datamodule)
 
-    trainer.fit(model=model)
+    trainer.fit(model=model, train_dataloaders=model.datamodule)
 
     print("Training complete.")

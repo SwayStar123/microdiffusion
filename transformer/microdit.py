@@ -13,7 +13,7 @@ import torch
 import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset, DataLoader
 from dataset.bucket_manager import BucketManager
-from dataset.commoncatalog import CommonCatalogDataModule, ResolutionSamplingCallback
+from dataset.commoncatalog import CommonCatalogDataModule
 from config import VAE_SCALING_FACTOR, DS_DIR_BASE, DATASET_NAME
 import torchvision
 
@@ -217,29 +217,18 @@ class LitMicroDiT(L.LightningModule):
         self.mask_ratio = mask_ratio
         self.examples = examples
         self.noise = torch.randn(9, 4, 64, 64)
-        self.resolution_callback = ResolutionSamplingCallback()
         self.vae = vae
         self.epochs = epochs
         self.datamodule = datamodule
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-
-        is_distributed = self.trainer.world_size > 1
-        world_size = self.trainer.world_size
-
-        if is_distributed:
-            # In distributed training, each GPU gets a portion of the batches
-            total_batches = sum(self.datamodule.batches_per_dataset) // world_size
-        else:
-            total_batches = sum(self.datamodule.batches_per_dataset)
         
-        # Let Lightning handle the total steps calculation
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.learning_rate,
             epochs=self.epochs,
-            steps_per_epoch=total_batches,
+            steps_per_epoch=len(self.datamodule.train_dataloader()),
         )
 
         return {
@@ -250,28 +239,7 @@ class LitMicroDiT(L.LightningModule):
     def forward(self, x, t, mask):
         self.model(x, t, mask)
 
-    def train_dataloader(self):
-        """
-        This method needs to return a single DataLoader that the trainer will use.
-        We'll use our resolution sampling callback to handle the multiple dataloaders.
-        """
-        # Get the list of dataloaders from the datamodule
-        dataloaders = self.datamodule.train_dataloader()
-        
-        # Initialize the callback with these dataloaders
-        self.resolution_callback.setup_dataloaders(dataloaders)
-        
-        # Return the first dataloader as the main one
-        # The callback will handle actual batch sampling
-        return dataloaders[0]
-
     def training_step(self, batch, batch_idx):
-        # Get the actual batch from the callback
-        batch = self.resolution_callback.get_next_batch(self.trainer, self)
-        if batch is None:
-            # Skip this step if no more batches available
-            return None
-        
         latents = batch["latents"]
         caption_embeddings = batch["embeddings"]
         resolution = batch["resolution"]

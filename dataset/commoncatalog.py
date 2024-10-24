@@ -21,7 +21,7 @@ import pyarrow.parquet as pq
 import random
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
-from typing import List, Optional, Tuple, Dict, Union
+from typing import Any, List, Optional, Tuple, Dict, Union
 from datasets import Dataset as HFDataset
 from datasets import load_dataset
 from huggingface_hub import HfFileSystem
@@ -43,130 +43,163 @@ def get_datasets():
 
     return datasets
 
-
-class CommonCatalogDataModule(L.LightningDataModule):
+class CommonCatalogDataset(IterableDataset):
     """
-    PyTorch Lightning DataModule that handles multiple resolution datasets.
+    Dataset that handles multiple resolution datasets with proper sampling.
+    Implements IterableDataset to handle sampling internally.
     """
     def __init__(
         self,
         batch_size: int,
-        num_workers: int = 0,
-        transform=None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        world_size: int = 1,
+        rank: int = 0,
+        shuffle: bool = True
     ):
         super().__init__()
         self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.transform = transform
-        self.seed = seed
+        self.shuffle = shuffle
+        self.world_size = world_size
+        self.rank = rank
+        self.epoch = 0
         
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
             torch.manual_seed(seed)
             
-    def setup(self, stage: Optional[str] = None):
-        """
-        Load datasets and set up sampling weights.
-        """
+        # Load datasets
         self.datasets = get_datasets()
         
-        # Calculate weights based on dataset lengths
-        lengths = [len(ds) for ds in self.datasets]
-        total_samples = sum(lengths)
-        self.sampling_weights = [length / total_samples for length in lengths]
+        # Calculate dataset lengths and weights
+        self.lengths = [len(ds) for ds in self.datasets]
+        total_samples = sum(self.lengths)
+        self.weights = [length / total_samples for length in self.lengths]
         
-        # Calculate batches per dataset
-        self.batches_per_dataset = [length // self.batch_size for length in lengths]
+        # Calculate number of batches
+        self.batches_per_dataset = [length // batch_size for length in self.lengths]
+        self.total_batches = sum(self.batches_per_dataset)
         
-        # Create samplers for distributed training
-        self.samplers = None
-        if self.trainer and self.trainer.use_distributed_sampler:
-            self.samplers = [
-                DistributedSampler(
-                    dataset,
-                    num_replicas=self.trainer.world_size,
-                    rank=self.trainer.global_rank,
-                    shuffle=True
-                )
-                for dataset in self.datasets
-            ]
-    
-    def _create_dataloader(self, dataset_idx: int) -> DataLoader:
-        """
-        Create a dataloader for a specific resolution dataset.
-        """
-        sampler = self.samplers[dataset_idx] if self.samplers else None
-        
-        return DataLoader(
-            self.datasets[dataset_idx],
-            batch_size=self.batch_size,
-            shuffle=(sampler is None),
-            sampler=sampler,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            drop_last=True  # Simplify by dropping partial batches
-        )
-    
-    def train_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        """
-        Returns a list of dataloaders, one per resolution.
-        """
-        if self.samplers:
-            for sampler in self.samplers:
-                sampler.set_epoch(self.trainer.current_epoch)
-        
-        return [self._create_dataloader(i) for i in range(len(self.datasets))]
-
-class ResolutionSamplingCallback(L.Callback):
-    """
-    Lightning callback to handle resolution sampling during training.
-    """
-    def __init__(self):
-        super().__init__()
-        self.current_loaders = None
-        self.batch_counts = None
-        
-    def setup_dataloaders(self, dataloaders):
-        """
-        Initialize with the list of dataloaders.
-        """
-        self.current_loaders = [iter(loader) for loader in dataloaders]
-        self.batch_counts = [0] * len(dataloaders)
-        
-    def on_train_epoch_start(self, trainer, pl_module):
-        """
-        Reset dataloaders at the start of each epoch.
-        """
-        dataloaders = trainer.datamodule.train_dataloader()
-        self.setup_dataloaders(dataloaders)
-        
-    def get_next_batch(self, trainer, pl_module):
-        """
-        Get next batch using weighted sampling.
-        """
-        weights = trainer.datamodule.sampling_weights
-        
-        # Adjust weights for available datasets
-        available_indices = [i for i, loader in enumerate(self.current_loaders)
-                           if self.batch_counts[i] < trainer.datamodule.batches_per_dataset[i]]
-        
-        if not available_indices:
-            return None
+        if self.world_size > 1:
+            self.total_batches = self.total_batches // self.world_size
             
-        # Normalize weights for available datasets
-        valid_weights = [weights[i] for i in available_indices]
-        total = sum(valid_weights)
-        valid_weights = [w / total for w in valid_weights]
+        # Create indices for each dataset
+        self.dataset_indices = [list(range(length)) for length in self.lengths]
+    
+    def __len__(self) -> int:
+        return self.total_batches
+    
+    def set_epoch(self, epoch: int) -> None:
+        """Set epoch number for proper shuffling in distributed training."""
+        self.epoch = epoch
         
-        # Sample dataset
-        dataset_idx = np.random.choice(available_indices, p=valid_weights)
+    def _get_shuffled_indices(self) -> List[List[int]]:
+        """Get shuffled indices for each dataset, properly seeded for distributed training."""
+        if not self.shuffle:
+            return self.dataset_indices
+            
+        # Create deterministic shuffle based on epoch and rank
+        shuffled_indices = []
+        for i, indices in enumerate(self.dataset_indices):
+            rand = random.Random(hash((self.epoch, self.rank, i)))
+            shuffled = indices.copy()
+            rand.shuffle(shuffled)
+            shuffled_indices.append(shuffled)
+            
+        return shuffled_indices
+    
+    def __iter__(self):
+        # Set up shuffled indices
+        shuffled_indices = self._get_shuffled_indices()
+        current_indices = [0] * len(self.datasets)
         
-        try:
-            batch = next(self.current_loaders[dataset_idx])
-            self.batch_counts[dataset_idx] += 1
-            return batch
-        except StopIteration:
-            # This shouldn't happen due to our available_indices check
-            return self.get_next_batch(trainer, pl_module)
+        # Calculate how many samples each GPU should process
+        samples_per_gpu = [length // self.world_size for length in self.lengths]
+        start_idx = [self.rank * (length // self.world_size) for length in self.lengths]
+        end_idx = [(self.rank + 1) * (length // self.world_size) for length in self.lengths]
+        
+        batches_yielded = 0
+        
+        while batches_yielded < self.total_batches:
+            # Sample a dataset based on weights and available samples
+            available_datasets = []
+            available_weights = []
+            
+            for i, (start, end, current) in enumerate(zip(start_idx, end_idx, current_indices)):
+                if current + self.batch_size <= end:
+                    available_datasets.append(i)
+                    available_weights.append(self.weights[i])
+                    
+            if not available_datasets:
+                break
+                
+            # Normalize weights
+            total_weight = sum(available_weights)
+            available_weights = [w / total_weight for w in available_weights]
+            
+            # Sample dataset
+            dataset_idx = np.random.choice(available_datasets, p=available_weights)
+            
+            # Get batch indices
+            batch_start = current_indices[dataset_idx]
+            batch_end = min(batch_start + self.batch_size, end_idx[dataset_idx])
+            batch_indices = shuffled_indices[dataset_idx][batch_start:batch_end]
+            
+            # Update current index
+            current_indices[dataset_idx] = batch_end
+            
+            # Yield batch
+            if len(batch_indices) == self.batch_size:
+                batch = [self.datasets[dataset_idx][idx] for idx in batch_indices]
+                batches_yielded += 1
+                yield self.collate_batch(batch)
+    
+    def collate_batch(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        """Collate batch of samples into a single batch dictionary."""
+        return {
+            key: torch.stack([sample[key] for sample in batch])
+            for key in batch[0].keys()
+        }
+
+class CommonCatalogDataModule(L.LightningDataModule):
+    """
+    Lightning DataModule that uses CommonCatalogDataset.
+    """
+    def __init__(
+        self,
+        batch_size: int,
+        num_workers: int = 0,
+        seed: Optional[int] = None
+    ):
+        super().__init__()
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.seed = seed
+    
+    def setup(self, stage: Optional[str] = None):
+        """Load datasets for quick access to examples, etc."""
+        self.datasets = get_datasets()
+    
+    def train_dataloader(self) -> DataLoader:
+        world_size = 1
+        rank = 0
+        
+        if self.trainer and self.trainer.use_distributed_sampler:
+            world_size = self.trainer.world_size
+            rank = self.trainer.global_rank
+            
+        dataset = CommonCatalogDataset(
+            batch_size=self.batch_size,
+            seed=self.seed,
+            world_size=world_size,
+            rank=rank,
+            shuffle=True
+        )
+        
+        # Create DataLoader with the custom dataset
+        return DataLoader(
+            dataset,
+            batch_size=None,  # Batching is handled by the dataset
+            num_workers=self.num_workers,
+            pin_memory=True
+        )
