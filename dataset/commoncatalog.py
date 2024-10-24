@@ -155,11 +155,47 @@ class CommonCatalogDataset(IterableDataset):
                 yield self.collate_batch(batch)
     
     def collate_batch(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        """Collate batch of samples into a single batch dictionary."""
-        return {
-            key: torch.stack([sample[key] for sample in batch])
-            for key in batch[0].keys()
-        }
+        """
+        Collate batch of samples into a single batch dictionary with proper data types.
+        Converts specific fields to float16 and reshapes latents.
+        """
+        collated = {}
+        
+        for key in batch[0].keys():
+            if key == "vae_latent":
+                # Convert bytes to tensor, reshape, and convert to float16
+                latents = [torch.from_numpy(np.frombuffer(sample[key], dtype=np.float16)) for sample in batch]
+                latents = torch.stack(latents)
+                
+                # Get shape from vae_latent_shape
+                shapes = [sample["latent_shape"] for sample in batch]
+                # Ensure all shapes in batch are the same
+                assert all(shape == shapes[0] for shape in shapes), "Inconsistent latent shapes in batch"
+                shape = shapes[0]
+                
+                # Reshape latents according to shape
+                latents = latents.reshape(-1, *shape)
+                collated["vae_latent"] = latents
+                
+            elif key == "text_embedding":
+                # Convert bytes to tensor and to float16
+                embeddings = [torch.from_numpy(np.frombuffer(sample[key], dtype=np.float16)) for sample in batch]
+                embeddings = torch.stack(embeddings)
+                collated["text_embedding"] = embeddings
+                
+            elif key == "latent_shape":
+                # Store shapes as a list of tuples
+                collated["latent_shape"] = torch.tensor(batch[0][key])
+                
+            else:
+                # Handle other fields normally
+                try:
+                    collated[key] = torch.stack([torch.tensor(sample[key]) for sample in batch])
+                except:
+                    # For fields that can't be converted to tensors, keep as list
+                    collated[key] = [sample[key] for sample in batch]
+        
+        return collated
 
 from lightning.pytorch.strategies import SingleDeviceStrategy
 

@@ -247,7 +247,6 @@ class LitMicroDiT(L.LightningModule):
         bs = latents.shape[0]
 
         latents = latents * VAE_SCALING_FACTOR
-        latents = latents.reshape(bs, resolution[0], resolution[1], resolution[2])
 
         mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
 
@@ -298,8 +297,7 @@ class LitMicroDiT(L.LightningModule):
         noise = self.noise.to(self.device)
         
         # Extract caption embeddings from self.examples
-        caption_embeddings = self.examples["text_embedding"]
-        caption_embeddings = torch.stack(caption_embeddings).to(self.device)
+        caption_embeddings = self.examples["text_embedding"].to(self.device)
         
         # Sample latents
         sampled_latents = self.sample(noise, caption_embeddings)
