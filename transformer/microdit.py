@@ -211,12 +211,12 @@ class LitMicroDiT(L.LightningModule):
     def __init__(self, model, vae, epochs, batch_size, num_workers=16, seed=42, learning_rate=1e-4,
                 ln=True, mask_ratio=0.5):
         super().__init__()
-        self.model = model
+        self.model = model.to(torch.float16)
         self.learning_rate = learning_rate
         self.ln = ln
         self.mask_ratio = mask_ratio
         self.noise = torch.randn(9, 4, 64, 64, dtype=torch.float16)
-        self.vae = vae
+        self.vae = vae.to(torch.float16)
         self.epochs = epochs
         self.batch_size = batch_size
         self.num_workers = num_workers
