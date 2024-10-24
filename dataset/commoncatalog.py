@@ -164,7 +164,7 @@ class CommonCatalogDataset(IterableDataset):
         for key in batch[0].keys():
             if key == "vae_latent":
                 # Convert bytes to tensor, reshape, and convert to float16
-                latents = [torch.from_numpy(np.frombuffer(sample[key], dtype=np.float16)) for sample in batch]
+                latents = [torch.from_numpy(np.frombuffer(sample[key], dtype=np.float16).copy()) for sample in batch]
                 latents = torch.stack(latents)
                 
                 # Get shape from vae_latent_shape
@@ -179,7 +179,7 @@ class CommonCatalogDataset(IterableDataset):
                 
             elif key == "text_embedding":
                 # Convert bytes to tensor and to float16
-                embeddings = [torch.from_numpy(np.frombuffer(sample[key], dtype=np.float16)) for sample in batch]
+                embeddings = [torch.from_numpy(np.frombuffer(sample[key], dtype=np.float16).copy()) for sample in batch]
                 embeddings = torch.stack(embeddings)
                 collated["text_embedding"] = embeddings
                 
@@ -244,3 +244,24 @@ class CommonCatalogDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True
         )
+    
+    def get_examples(self, num_examples: int = 9) -> Dict[str, torch.Tensor]:
+        """
+        Get properly formatted examples from the dataset.
+        """
+        if not hasattr(self, 'dataset'):
+            # Create a temporary dataset if not created yet
+            self.dataset = CommonCatalogDataset(
+                batch_size=self.batch_size,
+                seed=self.seed,
+                world_size=1,
+                rank=0,
+                shuffle=False
+            )
+            
+        examples = []
+        for i in range(num_examples):
+            examples.append(self.datasets[0][i])
+            
+        # Use the same collate function to format the examples
+        return self.dataset.collate_batch(examples)

@@ -34,7 +34,7 @@ if __name__ == "__main__":
         seed=SEED
     )
     datamodule.setup()  # Ensure datasets are loaded
-    examples = datamodule.datasets[0][:9]
+    examples = datamodule.get_examples(num_examples=9)
 
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
 
