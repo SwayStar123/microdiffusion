@@ -1,10 +1,10 @@
-USERNAME = "KagakuAI"
+USERNAME = "SwayStar123"
 DATASET_NAME = "preprocessed_commoncatalog-cc-by"
 DS_DIR_BASE = "../../datasets"
 MODELS_DIR_BASE = "../../models"
 VAE_SCALING_FACTOR = 0.13025
 
-BS = 16
+BS = 2048
 EPOCHS = 5
 MASK_RATIO = 0.75
 SEED = 42

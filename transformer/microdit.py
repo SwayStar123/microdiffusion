@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset, DataLoader
 from dataset.bucket_manager import BucketManager
 from dataset.commoncatalog import CommonCatalogDataModule, ResolutionSamplingCallback
-from config import VAE_SCALING_FACTOR, DS_DIR_BASE, METADATA_DATASET_NAME, DATASET_NAME
+from config import VAE_SCALING_FACTOR, DS_DIR_BASE, DATASET_NAME
 import torchvision
 
 class PatchMixer(nn.Module):
@@ -215,7 +215,7 @@ class LitMicroDiT(L.LightningModule):
         self.learning_rate = learning_rate
         self.ln = ln
         self.mask_ratio = mask_ratio
-        self.examples = examples[:9]
+        self.examples = examples
         self.noise = torch.randn(9, 4, 64, 64)
         self.resolution_callback = ResolutionSamplingCallback()
         self.vae = vae
@@ -293,7 +293,7 @@ class LitMicroDiT(L.LightningModule):
             images.append(z)
         return (images[-1] / VAE_SCALING_FACTOR)
     
-    def on_epoch_end(self):
+    def on_train_epoch_start(self):
         # Use the same random noise every epoch
         noise = self.noise.to(self.device)
         

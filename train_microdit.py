@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
-    trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback, model.resolution_callback], precision=16)
+    trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback, model.resolution_callback], precision="16-mixed")
     tuner = Tuner(trainer)
     tuner.lr_find(model)
 

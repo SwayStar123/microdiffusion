@@ -27,23 +27,24 @@ from datasets import load_dataset
 from huggingface_hub import HfFileSystem
 from config import DS_DIR_BASE, DATASET_NAME, USERNAME
 import numpy as np
-import pytorch_lightning as pl
+import lightning as L
 from torch.utils.data.distributed import DistributedSampler
 
 def get_datasets():
     fs = HfFileSystem()
-    objs = fs.ls(f"datasets/{USERNAME}/{DATASET_NAME}")
+    objs = fs.ls(f"datasets/{USERNAME}/{DATASET_NAME}", detail=False)
     folders = [obj for obj in objs if fs.isdir(obj)]
 
     datasets = []
     for folder in folders:
-        ds = load_dataset(f"{USERNAME}/{DATASET_NAME}", data_dir=folder, split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}")
+        folder_name = folder.split('/')[-1]
+        ds = load_dataset(f"{USERNAME}/{DATASET_NAME}", data_dir=folder_name, split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", num_proc=32)
         datasets.append(ds)
 
     return datasets
 
 
-class CommonCatalogDataModule(pl.LightningDataModule):
+class CommonCatalogDataModule(L.LightningDataModule):
     """
     PyTorch Lightning DataModule that handles multiple resolution datasets.
     """
@@ -118,7 +119,7 @@ class CommonCatalogDataModule(pl.LightningDataModule):
         
         return [self._create_dataloader(i) for i in range(len(self.datasets))]
 
-class ResolutionSamplingCallback(pl.Callback):
+class ResolutionSamplingCallback(L.Callback):
     """
     Lightning callback to handle resolution sampling during training.
     """
