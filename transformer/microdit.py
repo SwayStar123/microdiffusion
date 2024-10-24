@@ -240,9 +240,9 @@ class LitMicroDiT(L.LightningModule):
         self.model(x, t, mask)
 
     def training_step(self, batch, batch_idx):
-        latents = batch["latents"]
-        caption_embeddings = batch["embeddings"]
-        resolution = batch["resolution"]
+        latents = batch["vae_latent"]
+        caption_embeddings = batch["text_embedding"]
+        resolution = batch["vae_latent_shape"]
 
         bs = latents.shape[0]
 
@@ -298,7 +298,7 @@ class LitMicroDiT(L.LightningModule):
         noise = self.noise.to(self.device)
         
         # Extract caption embeddings from self.examples
-        caption_embeddings = [example["embeddings"] for example in self.examples]
+        caption_embeddings = self.example["text_embedding"]
         caption_embeddings = torch.stack(caption_embeddings).to(self.device)
         
         # Sample latents
