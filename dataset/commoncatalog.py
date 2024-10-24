@@ -119,7 +119,7 @@ class CommonCatalogDataModule(L.LightningDataModule):
         
         return [self._create_dataloader(i) for i in range(len(self.datasets))]
 
-class ResolutionSamplingCallback(pl.Callback):
+class ResolutionSamplingCallback(L.Callback):
     """
     Lightning callback to handle resolution sampling during training.
     """
