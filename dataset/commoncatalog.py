@@ -168,7 +168,7 @@ class CommonCatalogDataset(IterableDataset):
                 latents = torch.stack(latents)
                 
                 # Get shape from vae_latent_shape
-                shapes = [sample["latent_shape"] for sample in batch]
+                shapes = [sample["vae_latent_shape"] for sample in batch]
                 # Ensure all shapes in batch are the same
                 assert all(shape == shapes[0] for shape in shapes), "Inconsistent latent shapes in batch"
                 shape = shapes[0]
@@ -183,9 +183,9 @@ class CommonCatalogDataset(IterableDataset):
                 embeddings = torch.stack(embeddings)
                 collated["text_embedding"] = embeddings
                 
-            elif key == "latent_shape":
+            elif key == "vae_latent_shape":
                 # Store shapes as a list of tuples
-                collated["latent_shape"] = torch.tensor(batch[0][key])
+                collated["vae_latent_shape"] = torch.tensor(batch[0][key])
                 
             else:
                 # Handle other fields normally
