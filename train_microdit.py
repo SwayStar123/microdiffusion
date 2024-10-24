@@ -4,9 +4,8 @@ from transformer.microdit import LitMicroDiT, MicroDiT
 import lightning as L
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
-from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, SEED, VAE_HF_NAME, MODELS_DIR_BASE
+from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE
 from config import DIT_B as DIT
-from dataset.commoncatalog import CommonCatalogDataModule
 
 if __name__ == "__main__":
     input_dim = VAE_CHANNELS  # 4 channels in latent space
@@ -26,16 +25,6 @@ if __name__ == "__main__":
     dropout = 0.1
     embed_cat = False
 
-    world_size = torch.cuda.device_count()
-
-    datamodule = CommonCatalogDataModule(
-        batch_size=BS,
-        num_workers=4,
-        seed=SEED
-    )
-    datamodule.setup()  # Ensure datasets are loaded
-    examples = next(datamodule)[:9]
-
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
 
     model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
@@ -47,14 +36,14 @@ if __name__ == "__main__":
 
     print("Starting training...")
 
-    model = LitMicroDiT(model, vae=vae, examples=examples, epochs=EPOCHS, datamodule=datamodule, mask_ratio=MASK_RATIO)
+    model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, mask_ratio=MASK_RATIO)
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
     trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback], precision="16-mixed")
     tuner = Tuner(trainer)
-    tuner.lr_find(model, model.datamodule)
+    tuner.lr_find(model)
 
-    trainer.fit(model=model, train_dataloaders=model.datamodule)
+    trainer.fit(model=model)
 
     print("Training complete.")

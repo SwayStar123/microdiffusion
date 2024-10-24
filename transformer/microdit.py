@@ -13,7 +13,7 @@ import torch
 import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset, DataLoader
 from dataset.bucket_manager import BucketManager
-from dataset.commoncatalog import CommonCatalogDataModule
+from dataset.commoncatalog import CommonCatalogDataModule, CommonCatalogDataset
 from config import VAE_SCALING_FACTOR, DS_DIR_BASE, DATASET_NAME
 import torchvision
 
@@ -208,7 +208,7 @@ class MicroDiT(nn.Module):
         return x
 
 class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, vae, examples, epochs, datamodule, learning_rate=1e-4,
+    def __init__(self, model, vae, examples, epochs, batch_size, num_workers=0, seed=42, learning_rate=1e-4,
                 ln=True, mask_ratio=0.5):
         super().__init__()
         self.model = model
@@ -219,26 +219,42 @@ class LitMicroDiT(L.LightningModule):
         self.noise = torch.randn(9, 4, 64, 64)
         self.vae = vae
         self.epochs = epochs
-        self.datamodule = datamodule
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.seed = seed
+        self.example_embeddings = None
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=self.learning_rate,
-            epochs=self.epochs,
-            steps_per_epoch=len(self.datamodule.train_dataloader()),
-        )
 
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
-        }
+        return optimizer
 
     def forward(self, x, t, mask):
         self.model(x, t, mask)
 
+    def train_dataloader(self):
+        # Handle distributed training
+        world_size = 1
+        rank = 0
+        if self.trainer and hasattr(self.trainer, 'world_size'):
+            world_size = self.trainer.world_size
+            rank = self.global_rank
+
+        dataset = CommonCatalogDataset(
+            batch_size=self.batch_size,
+            seed=self.seed,
+            world_size=world_size,
+            rank=rank,
+            shuffle=True
+        )
+
+        return DataLoader(
+            dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+            pin_memory=True
+        )
+    
     def training_step(self, batch, batch_idx):
         latents = batch["vae_latent"]
         caption_embeddings = batch["text_embedding"]
@@ -292,15 +308,20 @@ class LitMicroDiT(L.LightningModule):
             images.append(z)
         return (images[-1] / VAE_SCALING_FACTOR)
     
+    def on_train_start(self):
+        # Get the first batch from the dataloader
+        dataloader = self.train_dataloader()
+        first_batch = next(iter(dataloader))
+        
+        # Take the first 9 embeddings
+        self.example_embeddings = first_batch["embeddings"][:9].to(self.device)
+    
     def on_train_epoch_start(self):
         # Use the same random noise every epoch
         noise = self.noise.to(self.device)
         
-        # Extract caption embeddings from self.examples
-        caption_embeddings = self.examples["text_embedding"].to(self.device)
-        
-        # Sample latents
-        sampled_latents = self.sample(noise, caption_embeddings)
+        # Use the stored embeddings
+        sampled_latents = self.sample(noise, self.example_embeddings)
         
         # Decode latents to images
         sampled_images = self.vae.decode(sampled_latents).sample
