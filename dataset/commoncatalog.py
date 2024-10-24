@@ -271,7 +271,7 @@ class CommonCatalogDataModule(L.LightningDataModule):
         # Unbatch first (each example is already a dict of tensors)
         unbatched = []
         for batch in examples:
-            for i in range(batch['latents'].size(0)):
+            for i in range(batch['vae_latent'].size(0)):
                 unbatched.append({k: v[i] for k, v in batch.items() if isinstance(v, torch.Tensor)})
                 
         # Take exactly num_examples
