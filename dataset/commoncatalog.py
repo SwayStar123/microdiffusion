@@ -200,9 +200,6 @@ class CommonCatalogDataset(IterableDataset):
 from lightning.pytorch.strategies import SingleDeviceStrategy
 
 class CommonCatalogDataModule(L.LightningDataModule):
-    """
-    Lightning DataModule that uses CommonCatalogDataset.
-    """
     def __init__(
         self,
         batch_size: int,
@@ -217,19 +214,28 @@ class CommonCatalogDataModule(L.LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         """Load datasets for quick access to examples, etc."""
         self.datasets = get_datasets()
+        
+        # Initialize the dataset here so it's always available
+        self.dataset = CommonCatalogDataset(
+            batch_size=self.batch_size,
+            seed=self.seed,
+            world_size=1,
+            rank=0,
+            shuffle=False
+        )
     
     def train_dataloader(self) -> DataLoader:
         world_size = 1
         rank = 0
         
-        # Check if we're in a distributed setting
         if self.trainer:
             strategy = getattr(self.trainer, 'strategy', None)
             if strategy and not isinstance(strategy, SingleDeviceStrategy):
                 world_size = self.trainer.world_size
                 rank = self.trainer.global_rank
             
-        dataset = CommonCatalogDataset(
+        # Create a new dataset instance for training with proper distributed settings
+        train_dataset = CommonCatalogDataset(
             batch_size=self.batch_size,
             seed=self.seed,
             world_size=world_size,
@@ -237,10 +243,9 @@ class CommonCatalogDataModule(L.LightningDataModule):
             shuffle=True
         )
         
-        # Create DataLoader with the custom dataset
         return DataLoader(
-            dataset,
-            batch_size=None,  # Batching is handled by the dataset
+            train_dataset,
+            batch_size=None,
             num_workers=self.num_workers,
             pin_memory=True
         )
@@ -250,18 +255,32 @@ class CommonCatalogDataModule(L.LightningDataModule):
         Get properly formatted examples from the dataset.
         """
         if not hasattr(self, 'dataset'):
-            # Create a temporary dataset if not created yet
-            self.dataset = CommonCatalogDataset(
-                batch_size=self.batch_size,
-                seed=self.seed,
-                world_size=1,
-                rank=0,
-                shuffle=False
-            )
+            self.setup()
             
+        # Collect examples using the iterator
         examples = []
-        for i in range(num_examples):
-            examples.append(self.datasets[0][i])
+        for i, example in enumerate(iter(self.dataset)):
+            if i >= num_examples:
+                break
+            examples.append(example)
             
-        # Use the same collate function to format the examples
-        return self.dataset.collate_batch(examples)
+        if len(examples) < num_examples:
+            raise ValueError(f"Could only collect {len(examples)} examples, but {num_examples} were requested.")
+            
+        # Since the iterator already returns formatted batches, we need to unbatch and rebatch
+        # Unbatch first (each example is already a dict of tensors)
+        unbatched = []
+        for batch in examples:
+            for i in range(batch['latents'].size(0)):
+                unbatched.append({k: v[i] for k, v in batch.items() if isinstance(v, torch.Tensor)})
+                
+        # Take exactly num_examples
+        unbatched = unbatched[:num_examples]
+        
+        # Rebatch into a single batch
+        final_batch = {
+            k: torch.stack([ex[k] for ex in unbatched])
+            for k in unbatched[0].keys()
+        }
+        
+        return final_batch
