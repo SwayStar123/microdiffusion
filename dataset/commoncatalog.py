@@ -215,9 +215,9 @@ class CommonCatalogDataModule(L.LightningDataModule):
         """Load datasets for quick access to examples, etc."""
         self.datasets = get_datasets()
         
-        # Initialize the dataset here so it's always available
-        self.dataset = CommonCatalogDataset(
-            batch_size=self.batch_size,
+        # Initialize the dataset with batch_size=1 for examples
+        self.example_dataset = CommonCatalogDataset(
+            batch_size=1,  # Use batch_size 1 for examples
             seed=self.seed,
             world_size=1,
             rank=0,
@@ -234,7 +234,6 @@ class CommonCatalogDataModule(L.LightningDataModule):
                 world_size = self.trainer.world_size
                 rank = self.trainer.global_rank
             
-        # Create a new dataset instance for training with proper distributed settings
         train_dataset = CommonCatalogDataset(
             batch_size=self.batch_size,
             seed=self.seed,
@@ -253,34 +252,32 @@ class CommonCatalogDataModule(L.LightningDataModule):
     def get_examples(self, num_examples: int = 9) -> Dict[str, torch.Tensor]:
         """
         Get properly formatted examples from the dataset.
+        Uses batch_size=1 to simplify example collection.
         """
-        if not hasattr(self, 'dataset'):
+        if not hasattr(self, 'example_dataset'):
             self.setup()
             
         # Collect examples using the iterator
         examples = []
-        for i, example in enumerate(iter(self.dataset)):
-            if i >= num_examples:
-                break
-            examples.append(example)
+        iterator = iter(self.example_dataset)
+        
+        try:
+            for _ in range(num_examples):
+                example = next(iterator)
+                # Since batch_size=1, we can just take the first item
+                examples.append({k: v[0] if isinstance(v, torch.Tensor) else v 
+                               for k, v in example.items()})
+        except StopIteration:
+            raise ValueError(f"Could only collect {len(examples)} examples, but {num_examples} were requested.")
             
         if len(examples) < num_examples:
             raise ValueError(f"Could only collect {len(examples)} examples, but {num_examples} were requested.")
-            
-        # Since the iterator already returns formatted batches, we need to unbatch and rebatch
-        # Unbatch first (each example is already a dict of tensors)
-        unbatched = []
-        for batch in examples:
-            for i in range(batch['vae_latent'].size(0)):
-                unbatched.append({k: v[i] for k, v in batch.items() if isinstance(v, torch.Tensor)})
-                
-        # Take exactly num_examples
-        unbatched = unbatched[:num_examples]
         
-        # Rebatch into a single batch
+        # Stack the examples into a single batch
         final_batch = {
-            k: torch.stack([ex[k] for ex in unbatched])
-            for k in unbatched[0].keys()
+            k: torch.stack([ex[k] for ex in examples])
+            for k in examples[0].keys()
+            if isinstance(examples[0][k], torch.Tensor)
         }
         
         return final_batch
