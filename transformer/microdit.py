@@ -215,7 +215,7 @@ class LitMicroDiT(L.LightningModule):
         self.learning_rate = learning_rate
         self.ln = ln
         self.mask_ratio = mask_ratio
-        self.noise = torch.randn(9, 4, 64, 64)
+        self.noise = torch.randn(9, 4, 64, 64, dtype=torch.float16)
         self.vae = vae
         self.epochs = epochs
         self.batch_size = batch_size
