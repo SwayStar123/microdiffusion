@@ -313,7 +313,7 @@ class LitMicroDiT(L.LightningModule):
         first_batch = next(iter(dataloader))
         
         # Take the first 9 embeddings
-        self.example_embeddings = first_batch["embeddings"][:9].to(self.device)
+        self.example_embeddings = first_batch["text_embedding"][:9].to(self.device)
     
     def on_train_epoch_start(self):
         # Use the same random noise every epoch
