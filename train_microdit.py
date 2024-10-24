@@ -5,7 +5,7 @@ import lightning as L
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
 from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, SEED
-from config import DIT_B as DIT
+from config import DIT_S as DIT
 from torch.amp import autocast
 
 if __name__ == "__main__":
@@ -18,27 +18,24 @@ if __name__ == "__main__":
     caption_embed_dim = 1152  # SigLip embeds to 1152 dims
     # pos_embed_dim = 60
     pos_embed_dim = None
-    # timestep_caption_embed_dim = 60
-    timestep_caption_embed_dim = None
     num_experts = 8
     active_experts = 2
     patch_mixer_layers = 1
     dropout = 0.1
-    embed_cat = False
 
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
 
     model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
-                    num_heads, mlp_dim, caption_embed_dim, timestep_caption_embed_dim,
-                    pos_embed_dim, num_experts, active_experts,
-                    dropout, patch_mixer_layers, embed_cat)
+                    num_heads, mlp_dim, caption_embed_dim,
+                    num_experts, active_experts,
+                    dropout, patch_mixer_layers)
 
     print("Number of parameters: ", sum(p.numel() for p in model.parameters()))
 
     print("Starting training...")
 
     with autocast(device_type="cuda", dtype=torch.float16):
-        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO)
+        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=4, seed=SEED, mask_ratio=MASK_RATIO)
 
         checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 

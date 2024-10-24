@@ -29,6 +29,7 @@ from config import DS_DIR_BASE, DATASET_NAME, USERNAME
 import numpy as np
 import lightning as L
 from torch.utils.data.distributed import DistributedSampler
+from lightning.pytorch.strategies import SingleDeviceStrategy
 
 def get_datasets():
     fs = HfFileSystem()
@@ -196,8 +197,6 @@ class CommonCatalogDataset(IterableDataset):
                     collated[key] = [sample[key] for sample in batch]
         
         return collated
-
-from lightning.pytorch.strategies import SingleDeviceStrategy
 
 class CommonCatalogDataModule(L.LightningDataModule):
     def __init__(
