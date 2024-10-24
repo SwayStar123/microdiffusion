@@ -55,6 +55,6 @@ if __name__ == "__main__":
     tuner = Tuner(trainer)
     tuner.lr_find(model)
 
-    trainer.fit(model=model)
+    trainer.fit(model=model, datamodule=datamodule)
 
     print("Training complete.")
