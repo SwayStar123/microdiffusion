@@ -184,9 +184,12 @@ class CommonCatalogDataModule(L.LightningDataModule):
         world_size = 1
         rank = 0
         
-        if self.trainer and self.trainer.use_distributed_sampler:
-            world_size = self.trainer.world_size
-            rank = self.trainer.global_rank
+        # Check if we're in a distributed setting
+        if self.trainer:
+            strategy = getattr(self.trainer, 'strategy', None)
+            if strategy and not isinstance(strategy, L.strategies.SingleDeviceStrategy):
+                world_size = self.trainer.world_size
+                rank = self.trainer.global_rank
             
         dataset = CommonCatalogDataset(
             batch_size=self.batch_size,
