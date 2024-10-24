@@ -267,11 +267,11 @@ class LitMicroDiT(L.LightningModule):
 
         if self.ln:
             nt = torch.randn((bs,)).to(self.device)
-            t = torch.sigmoid(nt)
+            t = torch.sigmoid(nt).to(torch.float16)
         else:
-            t = torch.rand((bs,)).to(self.device)
+            t = torch.rand((bs,)).to(self.device).to(torch.float16)
         texp = t.view([bs, *([1] * len(latents.shape[1:]))])
-        z1 = torch.randn_like(latents)
+        z1 = torch.randn_like(latents, dtype=torch.float16)
         zt = (1 - texp) * latents + texp * z1
         
         vtheta = self.model(zt, t, caption_embeddings, mask)
@@ -296,7 +296,7 @@ class LitMicroDiT(L.LightningModule):
         images = [z]
         for i in range(sample_steps, 0, -1):
             t = i / sample_steps
-            t = torch.tensor([t] * b).to(z.device)
+            t = torch.tensor([t] * b).to(z.device).to(torch.float16)
 
             vc = self.model(z, t, cond, None)
             if null_cond is not None:
