@@ -92,7 +92,7 @@ class MicroDiT(nn.Module):
         )
 
         # MHA for timestep and caption
-        self.mha = nn.MultiheadAttention(self.timestep_caption_embed_dim, num_heads)
+        self.mha = nn.MultiheadAttention(self.timestep_caption_embed_dim, num_heads, batch_first=True)
         
         # MLP for timestep and caption
         self.mlp = nn.Sequential(
@@ -156,7 +156,7 @@ class MicroDiT(nn.Module):
         # Caption embedding
         c_emb = self.caption_embed(caption_embeddings)  # (batch_size, timestep_caption_embed_dim)
 
-        mha_out = self.mha(t_emb.unsqueeze(0), c_emb.unsqueeze(0), c_emb.unsqueeze(0))[0].squeeze(0)
+        mha_out = self.mha(t_emb.unsqueeze(1), c_emb.unsqueeze(1), c_emb.unsqueeze(1))[0].squeeze(1)
         mlp_out = self.mlp(mha_out)
         
         # Pool + MLP
