@@ -38,11 +38,7 @@ if __name__ == "__main__":
 
     is_distributed = world_size > 1
 
-    if is_distributed:
-        # In distributed training, each GPU gets a portion of the batches
-        total_batches = sum(datamodule.batches_per_dataset) // world_size
-    else:
-        total_batches = sum(datamodule.batches_per_dataset)
+
 
     vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae")
 
@@ -55,7 +51,7 @@ if __name__ == "__main__":
 
     print("Starting training...")
 
-    model = LitMicroDiT(model, vae=vae, examples=examples, epochs=EPOCHS, steps_per_epoch=total_batches, mask_ratio=MASK_RATIO)
+    model = LitMicroDiT(model, vae=vae, examples=examples, epochs=EPOCHS, datamodule=datamodule, mask_ratio=MASK_RATIO)
 
     checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
@@ -63,6 +59,6 @@ if __name__ == "__main__":
     tuner = Tuner(trainer)
     tuner.lr_find(model)
 
-    trainer.fit(model=model, train_dataloaders=datamodule)
+    trainer.fit(model=model)
 
     print("Training complete.")
