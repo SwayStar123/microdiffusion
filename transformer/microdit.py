@@ -241,6 +241,22 @@ class LitMicroDiT(L.LightningModule):
     def forward(self, x, t, mask):
         self.model(x, t, mask)
 
+    def train_dataloader(self):
+        """
+        This method needs to return a single DataLoader that the trainer will use.
+        We'll use our resolution sampling callback to handle the multiple dataloaders.
+        """
+        # Get the list of dataloaders from the datamodule
+        dataloaders = self.trainer.datamodule.train_dataloader()
+        
+        # Initialize the callback with these dataloaders
+        self.resolution_callback.setup_dataloaders(dataloaders)
+        
+        # Return the first dataloader as the main one
+        # The callback will handle actual batch sampling
+        return dataloaders[0]
+
+
     def training_step(self, batch, batch_idx):
         latents = batch["latents"]
         caption_embeddings = batch["embeddings"]

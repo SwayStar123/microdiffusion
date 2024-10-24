@@ -119,7 +119,7 @@ class CommonCatalogDataModule(L.LightningDataModule):
         
         return [self._create_dataloader(i) for i in range(len(self.datasets))]
 
-class ResolutionSamplingCallback(L.Callback):
+class ResolutionSamplingCallback(pl.Callback):
     """
     Lightning callback to handle resolution sampling during training.
     """
@@ -128,23 +128,29 @@ class ResolutionSamplingCallback(L.Callback):
         self.current_loaders = None
         self.batch_counts = None
         
+    def setup_dataloaders(self, dataloaders):
+        """
+        Initialize with the list of dataloaders.
+        """
+        self.current_loaders = [iter(loader) for loader in dataloaders]
+        self.batch_counts = [0] * len(dataloaders)
+        
     def on_train_epoch_start(self, trainer, pl_module):
         """
-        Initialize dataloader iterators at the start of each epoch.
+        Reset dataloaders at the start of each epoch.
         """
-        self.current_loaders = [iter(loader) for loader in trainer.train_dataloader]
-        self.batch_counts = [0] * len(self.current_loaders)
+        dataloaders = trainer.datamodule.train_dataloader()
+        self.setup_dataloaders(dataloaders)
         
     def get_next_batch(self, trainer, pl_module):
         """
         Get next batch using weighted sampling.
         """
-        datamodule = trainer.datamodule
-        weights = datamodule.sampling_weights
+        weights = trainer.datamodule.sampling_weights
         
         # Adjust weights for available datasets
         available_indices = [i for i, loader in enumerate(self.current_loaders)
-                           if self.batch_counts[i] < datamodule.batches_per_dataset[i]]
+                           if self.batch_counts[i] < trainer.datamodule.batches_per_dataset[i]]
         
         if not available_indices:
             return None
@@ -162,4 +168,5 @@ class ResolutionSamplingCallback(L.Callback):
             self.batch_counts[dataset_idx] += 1
             return batch
         except StopIteration:
+            # This shouldn't happen due to our available_indices check
             return self.get_next_batch(trainer, pl_module)
