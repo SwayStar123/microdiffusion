@@ -13,8 +13,9 @@ import torch
 import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset, DataLoader
 from dataset.bucket_manager import BucketManager
-from datasets import load_dataset
+from dataset.commoncatalog import CommonCatalogDataModule, ResolutionSamplingCallback
 from config import VAE_SCALING_FACTOR, DS_DIR_BASE, METADATA_DATASET_NAME, DATASET_NAME
+import torchvision
 
 class PatchMixer(nn.Module):
     def __init__(self, embed_dim, num_heads, num_layers=2):
@@ -205,96 +206,28 @@ class MicroDiT(nn.Module):
         x = unpatchify(x, self.patch_size, height, width)
         
         return x
-    
-class CustomDataset(IterableDataset):
-    def __init__(self, dataset, index_image_id_map, bucket_manager):
-        self.dataset = dataset
-        self.index_image_id_map = index_image_id_map
-        self.bucket_manager = bucket_manager
-
-    def __iter__(self):
-        # Generate batches using the BucketManager
-        for batch_data, resolution in self.bucket_manager.generator():
-            # batch_data is a list of image_ids
-            # resolution is the target resolution for the batch
-
-            # Map image_ids to dataset indices
-            indices = [self.index_image_id_map[f"{int(image_id):08d}"] for image_id in batch_data]
-
-            # Fetch data samples from the dataset using indices
-            batch_items = [self.dataset[int(idx)] for idx in indices]
-
-            # Prepare batch data
-            batch_latents = []
-            batch_embeddings = []
-            batch_captions = []
-
-            for item in batch_items:
-                # Convert 'latent' and 'embedding' to tensors
-                latent = torch.tensor(item["latent"]).reshape(4, resolution[0], resolution[1])
-                embedding = torch.tensor(item["embedding"])
-                caption = item["caption"]
-
-                batch_latents.append(latent)
-                batch_embeddings.append(embedding)
-                batch_captions.append(caption)
-
-            # Stack tensors (assuming all latents and embeddings are of the same shape)
-            batch_latents = torch.stack(batch_latents)
-            batch_embeddings = torch.stack(batch_embeddings)
-
-            # Yield the batch data and resolution
-            yield {
-                "latents": batch_latents,
-                "embeddings": batch_embeddings,
-                "captions": batch_captions,
-                "resolution": resolution,
-            }
-
-    def __len__(self):
-        # Return the total number of samples (approximate if necessary)
-        return self.bucket_manager.batch_total
 
 class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, batch_size=1, seed=0, learning_rate=1e-4,
-                ln=True, mask_ratio=0.5, dataset_path=f"{DS_DIR_BASE}/{DATASET_NAME}",
-                bucket_file = f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}/res_map.json",
-                index_image_id_map_path=f"{DS_DIR_BASE}/{METADATA_DATASET_NAME}/image_id_map.json"):
+    def __init__(self, model, examples, learning_rate=1e-4,
+                ln=True, mask_ratio=0.5):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
         self.ln = ln
         self.mask_ratio = mask_ratio
-        self.batch_size = batch_size
-        self.seed = seed
-        self.bucket_manager = None
-        self.total_steps = None
-        self.dataset_path = dataset_path
-        self.bucket_file = bucket_file
-        self.index_image_id_map_path = index_image_id_map_path
-
-    def setup(self, stage=None):
-        # Initialize the BucketManager here
-        self.bucket_manager = BucketManager(
-            bucket_file=self.bucket_file,
-            bsz=self.batch_size,
-            world_size=self.trainer.world_size,
-            global_rank=self.global_rank,
-            seed=self.seed,
-            divisible=2,
-            min_dim=32,
-            max_size=(64,64),
-            base_res=(64,64),
-            dim_limit=128
-        )
+        self.examples = examples[:9]
+        self.noise = torch.randn(9, 4, 64, 64)
+        self.resolution_callback = ResolutionSamplingCallback()
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        
+        # Let Lightning handle the total steps calculation
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.learning_rate,
             epochs=self.trainer.max_epochs,
-            steps_per_epoch=self.bucket_manager.batch_total,
+            steps_per_epoch=len(self.trainer.train_dataloader),
         )
 
         return {
@@ -305,43 +238,15 @@ class LitMicroDiT(L.LightningModule):
     def forward(self, x, t, mask):
         self.model(x, t, mask)
 
-    def train_dataloader(self):
-        # Load the dataset
-        dataset = load_dataset(
-            self.dataset_path,
-            split="train",
-            keep_in_memory=False,
-            cache_dir=None,
-        )
-
-        # Load the image_id to index mapping
-        with open(self.index_image_id_map_path, "r") as f:
-            index_image_id_map = json.load(f)
-
-        # Create the CustomDataset, pass the bucket_manager
-        dataset = CustomDataset(
-            dataset=dataset,
-            index_image_id_map=index_image_id_map,
-            bucket_manager=self.bucket_manager,
-        )
-
-        dataloader = DataLoader(
-            dataset,
-            batch_size=None,  # Batching is handled internally by the dataset
-            num_workers=0,    # Set to 0 to avoid multiprocessing issues
-        )
-        return dataloader
-
     def training_step(self, batch, batch_idx):
         latents = batch["latents"]
         caption_embeddings = batch["embeddings"]
-        captions = batch["captions"]
         resolution = batch["resolution"]
 
         bs = latents.shape[0]
 
         latents = latents * VAE_SCALING_FACTOR
-        latents = latents.reshape(bs, 4, resolution[0], resolution[1])
+        latents = latents.reshape(bs, resolution[0], resolution[1], resolution[2])
 
         mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
 
@@ -386,3 +291,18 @@ class LitMicroDiT(L.LightningModule):
             z = z - dt * vc
             images.append(z)
         return (images[-1] / VAE_SCALING_FACTOR)
+    
+    def on_epoch_end(self):
+        # Use the same random noise every epoch
+        noise = self.noise.to(self.device)
+        
+        # Extract caption embeddings from self.examples
+        caption_embeddings = [example["embeddings"] for example in self.examples]
+        caption_embeddings = torch.stack(caption_embeddings).to(self.device)
+        
+        # Sample images
+        sampled_images = self.sample(noise, caption_embeddings)
+        
+        # Log the sampled images
+        grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
+        self.logger.experiment.add_image("Sampled Images", grid, self.current_epoch)

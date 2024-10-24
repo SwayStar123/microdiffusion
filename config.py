@@ -1,10 +1,5 @@
 USERNAME = "KagakuAI"
-DATASET_NAME = "commoncatalog_cc_by_moondream_latents"
-METADATA_DATASET_NAME = "commoncatalog_cc_by_moondream_metadata"
-IMG_COLUMN_NAME = "jpg"
-IMAGE_ID_COLUMN_NAME = "key"
-PREPROCESS_BS_PER_GPU = 8
-IMAGES_PER_PARQUET = PREPROCESS_BS_PER_GPU * 100
+DATASET_NAME = "preprocessed_commoncatalog-cc-by"
 DS_DIR_BASE = "../../datasets"
 MODELS_DIR_BASE = "../../models"
 VAE_SCALING_FACTOR = 0.13025
@@ -12,13 +7,12 @@ VAE_SCALING_FACTOR = 0.13025
 BS = 16
 EPOCHS = 5
 MASK_RATIO = 0.75
+SEED = 42
 
 VAE_HF_NAME = "madebyollin/sdxl-vae-fp16-fix"
 VAE_CHANNELS = 4
 SIGLIP_HF_NAME = "hf-hub:timm/ViT-SO400M-14-SigLIP-384"
 SIGLIP_EMBED_DIM = 1152
-
-MP_BACKEND="gloo"
 
 DIT_G = dict(
     num_layers=40,
