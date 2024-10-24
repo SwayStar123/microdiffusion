@@ -214,15 +214,6 @@ class CommonCatalogDataModule(L.LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         """Load datasets for quick access to examples, etc."""
         self.datasets = get_datasets()
-        
-        # Initialize the dataset with batch_size=1 for examples
-        self.example_dataset = CommonCatalogDataset(
-            batch_size=1,  # Use batch_size 1 for examples
-            seed=self.seed,
-            world_size=1,
-            rank=0,
-            shuffle=False
-        )
     
     def train_dataloader(self) -> DataLoader:
         world_size = 1
@@ -249,35 +240,3 @@ class CommonCatalogDataModule(L.LightningDataModule):
             pin_memory=True
         )
     
-    def get_examples(self, num_examples: int = 9) -> Dict[str, torch.Tensor]:
-        """
-        Get properly formatted examples from the dataset.
-        Uses batch_size=1 to simplify example collection.
-        """
-        if not hasattr(self, 'example_dataset'):
-            self.setup()
-            
-        # Collect examples using the iterator
-        examples = []
-        iterator = iter(self.example_dataset)
-        
-        try:
-            for _ in range(num_examples):
-                example = next(iterator)
-                # Since batch_size=1, we can just take the first item
-                examples.append({k: v[0] if isinstance(v, torch.Tensor) else v 
-                               for k, v in example.items()})
-        except StopIteration:
-            raise ValueError(f"Could only collect {len(examples)} examples, but {num_examples} were requested.")
-            
-        if len(examples) < num_examples:
-            raise ValueError(f"Could only collect {len(examples)} examples, but {num_examples} were requested.")
-        
-        # Stack the examples into a single batch
-        final_batch = {
-            k: torch.stack([ex[k] for ex in examples])
-            for k in examples[0].keys()
-            if isinstance(examples[0][k], torch.Tensor)
-        }
-        
-        return final_batch
