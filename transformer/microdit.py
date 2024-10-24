@@ -298,7 +298,7 @@ class LitMicroDiT(L.LightningModule):
         noise = self.noise.to(self.device)
         
         # Extract caption embeddings from self.examples
-        caption_embeddings = self.example["text_embedding"]
+        caption_embeddings = self.examples["text_embedding"]
         caption_embeddings = torch.stack(caption_embeddings).to(self.device)
         
         # Sample latents
