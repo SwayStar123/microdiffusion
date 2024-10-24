@@ -230,9 +230,8 @@ class LitMicroDiT(L.LightningModule):
             optimizer,
             max_lr=self.learning_rate,
             epochs=self.epochs,
-            steps_per_epoch=len(self.steps_per_epoch),
+            steps_per_epoch=self.steps_per_epoch,
         )
-
 
         return {
             "optimizer": optimizer,
