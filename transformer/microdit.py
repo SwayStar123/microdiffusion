@@ -5,13 +5,12 @@ from .backbone import TransformerBackbone
 from .moedit import TimestepEmbedder
 import lightning as L
 import torch
-from torch.utils.data import DataLoader
 import os
 import json
 import glob
 import torch
 import pyarrow.parquet as pq
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import IterableDataset, DataLoader, RandomSampler
 from dataset.bucket_manager import BucketManager
 # from dataset.commoncatalog import CommonCatalogDataModule, CommonCatalogDataset
 from dataset.coco30k import CustomBatchSampler, CustomDataset, get_datasets
@@ -216,8 +215,16 @@ class LitMicroDiT(L.LightningModule):
     def train_dataloader(self):
         datasets = get_datasets()
         dataset = CustomDataset(datasets)
-        sampler = CustomBatchSampler(dataset, self.batch_size, shuffle=True)
-        dataloader = DataLoader(dataset, batch_sampler=sampler, num_workers=self.num_workers, pin_memory=True)
+        base_sampler = RandomSampler(dataset)
+
+        batch_sampler = CustomBatchSampler(
+            sampler=base_sampler,
+            batch_size=self.batch_size,
+            drop_last=True,
+            dataset=dataset,
+            shuffle=True
+        )
+        dataloader = DataLoader(dataset, batch_sampler=batch_sampler, num_workers=self.num_workers, pin_memory=True)
 
         return dataloader
 

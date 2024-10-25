@@ -3,7 +3,7 @@ import os
 import pyarrow.parquet as pq
 import random
 import torch
-from torch.utils.data import Dataset, DataLoader, Sampler
+from torch.utils.data import Dataset, DataLoader, Sampler, BatchSampler, SequentialSampler, RandomSampler
 from typing import Any, List, Optional, Tuple, Dict, Union
 from datasets import Dataset as HFDataset
 from datasets import load_dataset
@@ -89,32 +89,41 @@ class CustomDataset(Dataset):
         text_embedding = torch.tensor(example['text_embedding'])
         return vae_latent, text_embedding
 
-class CustomBatchSampler(Sampler):
-    def __init__(self, dataset, batch_size, shuffle=True):
+class CustomBatchSampler(BatchSampler):
+    def __init__(self, sampler, batch_size, drop_last, dataset, shuffle=True):
         """
         Args:
-            dataset (Dataset): The dataset to sample from.
+            sampler (Sampler): Base sampler (e.g., RandomSampler).
             batch_size (int): Number of samples per batch.
+            drop_last (bool): Whether to drop the last incomplete batch.
+            dataset (Dataset): The dataset to sample from.
             shuffle (bool): Whether to shuffle the data.
         """
-        self.dataset = dataset
+        self.sampler = sampler
         self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.dataset = dataset
         self.shuffle = shuffle
         self.sizes = self.dataset.sizes
         self.batches = self.create_batches()
     
     def create_batches(self):
         size_to_indices = defaultdict(list)
+        # Collect indices from the base sampler
+        indices = list(self.sampler)
         # Group indices by vae_latent_shape
-        for idx, size in enumerate(self.sizes):
+        for idx in indices:
+            size = self.sizes[idx]
             size_to_indices[size].append(idx)
         batches = []
-        for size, indices in size_to_indices.items():
+        for size, idxs in size_to_indices.items():
             if self.shuffle:
-                random.shuffle(indices)
+                random.shuffle(idxs)
             # Create batches from indices of the same size
-            batch_indices = [indices[i:i + self.batch_size] 
-                             for i in range(0, len(indices), self.batch_size)]
+            batch_indices = [idxs[i:i + self.batch_size] 
+                             for i in range(0, len(idxs), self.batch_size)]
+            if self.drop_last:
+                batch_indices = [batch for batch in batch_indices if len(batch) == self.batch_size]
             batches.extend(batch_indices)
         if self.shuffle:
             random.shuffle(batches)  # Shuffle the list of batches
