@@ -13,8 +13,9 @@ import torch
 import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset, DataLoader
 from dataset.bucket_manager import BucketManager
-from dataset.commoncatalog import CommonCatalogDataModule, CommonCatalogDataset
-from config import VAE_SCALING_FACTOR, DS_DIR_BASE, DATASET_NAME
+# from dataset.commoncatalog import CommonCatalogDataModule, CommonCatalogDataset
+from dataset.coco30k import CustomBatchSampler, CustomDataset, get_datasets
+from config import VAE_SCALING_FACTOR
 import torchvision
 
 class PatchMixer(nn.Module):
@@ -213,32 +214,15 @@ class LitMicroDiT(L.LightningModule):
         self.model(x, t, mask)
 
     def train_dataloader(self):
-        # Handle distributed training
-        world_size = 1
-        rank = 0
-        if self.trainer and hasattr(self.trainer, 'world_size'):
-            world_size = self.trainer.world_size
-            rank = self.global_rank
+        datasets = get_datasets()
+        dataset = CustomDataset(datasets)
+        sampler = CustomBatchSampler(dataset, self.batch_size, shuffle=True)
+        dataloader = DataLoader(dataset, batch_sampler=sampler, num_workers=self.num_workers, pin_memory=True)
 
-        dataset = CommonCatalogDataset(
-            batch_size=self.batch_size,
-            seed=self.seed,
-            world_size=world_size,
-            rank=rank,
-            shuffle=True
-        )
+        return dataloader
 
-        return DataLoader(
-            dataset,
-            batch_size=None,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-    
     def training_step(self, batch, batch_idx):
-        latents = batch["vae_latent"]
-        caption_embeddings = batch["text_embedding"]
-        resolution = batch["vae_latent_shape"]
+        latents, caption_embeddings = batch
 
         bs = latents.shape[0]
 
@@ -291,10 +275,10 @@ class LitMicroDiT(L.LightningModule):
     def on_train_start(self):
         # Get the first batch from the dataloader
         dataloader = self.train_dataloader()
-        first_batch = next(iter(dataloader))
+        latents, embeddings = next(iter(dataloader))
         
         # Take the first 9 embeddings
-        self.example_embeddings = first_batch["text_embedding"][:9].to(self.device)
+        self.example_embeddings = embeddings[:9].to(self.device)
     
     def on_train_epoch_start(self):
         # Use the same random noise every epoch

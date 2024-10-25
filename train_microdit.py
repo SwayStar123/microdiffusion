@@ -35,7 +35,7 @@ if __name__ == "__main__":
     print("Starting training...")
 
     with autocast(device_type="cuda", dtype=torch.float16):
-        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=4, seed=SEED, mask_ratio=MASK_RATIO)
+        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO)
 
         checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
