@@ -6,11 +6,9 @@ from .moedit import TimestepEmbedder
 import lightning as L
 import torch
 import torch
-import pyarrow.parquet as pq
-from torch.utils.data import DataLoader, RandomSampler
-# from dataset.commoncatalog import CommonCatalogDataModule, CommonCatalogDataset
-from dataset.coco30k import ShapeBatchingDataset, DATASET_NAME
-from config import VAE_SCALING_FACTOR, DS_DIR_BASE, USERNAME
+from torch.utils.data import DataLoader
+from dataset.shapebatching_dataset import ShapeBatchingDataset
+from config import VAE_SCALING_FACTOR, DS_DIR_BASE, USERNAME, DATASET_NAME
 import torchvision
 from datasets import load_dataset
 

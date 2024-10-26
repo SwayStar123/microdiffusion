@@ -1,8 +1,7 @@
 import torch
 from torch.utils.data import IterableDataset
 from collections import defaultdict
-
-DATASET_NAME = "preprocessed_recap-coco30k-moondream"
+import numpy as np
 
 class ShapeBatchingDataset(IterableDataset):
     def __init__(self, hf_dataset, batch_size):
@@ -34,8 +33,8 @@ class ShapeBatchingDataset(IterableDataset):
 
         batch = {
             'caption': [s['caption'] for s in samples],
-            'vae_latent': torch.tensor([s['vae_latent'] for s in samples]).reshape(-1, *vae_latent_shape),
+            'vae_latent': torch.tensor(np.stack([np.frombuffer(s['vae_latent'], dtype=np.float16).copy() for s in samples])).reshape(-1, *vae_latent_shape),
             'vae_latent_shape': vae_latent_shape,
-            'text_embedding': torch.tensor([s['text_embedding'] for s in samples]),
+            'text_embedding': torch.tensor(np.stack([np.frombuffer(s['text_embedding'], dtype=np.float16).copy() for s in samples])),
         }
         return batch
