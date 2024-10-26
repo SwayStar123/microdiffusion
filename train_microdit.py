@@ -7,8 +7,12 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, SEED
 from config import DIT_S as DIT
 from torch.amp import autocast
+import datasets
 
 if __name__ == "__main__":
+    # Comment this out if you havent downloaded dataset and models yet
+    datasets.config.HF_HUB_OFFLINE = 1
+
     input_dim = VAE_CHANNELS  # 4 channels in latent space
     patch_size = (2, 2)
     embed_dim = DIT["embed_dim"]
@@ -39,7 +43,7 @@ if __name__ == "__main__":
 
         checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
-        trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback], precision="16-mixed")
+        trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback])
         tuner = Tuner(trainer)
         tuner.lr_find(model)
 

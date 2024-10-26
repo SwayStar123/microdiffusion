@@ -5,17 +5,14 @@ from .backbone import TransformerBackbone
 from .moedit import TimestepEmbedder
 import lightning as L
 import torch
-import os
-import json
-import glob
 import torch
 import pyarrow.parquet as pq
-from torch.utils.data import IterableDataset, DataLoader, RandomSampler
-from dataset.bucket_manager import BucketManager
+from torch.utils.data import DataLoader, RandomSampler
 # from dataset.commoncatalog import CommonCatalogDataModule, CommonCatalogDataset
-from dataset.coco30k import CustomBatchSampler, CustomDataset, get_datasets
-from config import VAE_SCALING_FACTOR
+from dataset.coco30k import ShapeBatchingDataset, DATASET_NAME
+from config import VAE_SCALING_FACTOR, DS_DIR_BASE, USERNAME
 import torchvision
+from datasets import load_dataset
 
 class PatchMixer(nn.Module):
     def __init__(self, embed_dim, num_heads, num_layers=2):
@@ -192,12 +189,12 @@ class LitMicroDiT(L.LightningModule):
     def __init__(self, model, vae, epochs, batch_size, num_workers=16, seed=42, learning_rate=1e-4,
                 ln=True, mask_ratio=0.5):
         super().__init__()
-        self.model = model.to(torch.float16)
+        self.model = model
         self.learning_rate = learning_rate
         self.ln = ln
         self.mask_ratio = mask_ratio
-        self.noise = torch.randn(9, 4, 64, 64, dtype=torch.float16)
-        self.vae = vae.to(torch.float16)
+        self.noise = torch.randn(9, 4, 32, 32)
+        self.vae = vae
         self.epochs = epochs
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -212,24 +209,31 @@ class LitMicroDiT(L.LightningModule):
     def forward(self, x, t, mask):
         self.model(x, t, mask)
 
-    def train_dataloader(self):
-        datasets = get_datasets()
-        dataset = CustomDataset(datasets)
-        base_sampler = RandomSampler(dataset)
+    def prepare_data(self):
+        load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", num_proc=self.num_workers)
 
-        batch_sampler = CustomBatchSampler(
-            sampler=base_sampler,
+    def train_dataloader(self):
+        hf_dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}").to_iterable_dataset().shuffle(seed=self.seed, buffer_size=self.batch_size*16)
+        dataset = ShapeBatchingDataset(
+            hf_dataset=hf_dataset,
             batch_size=self.batch_size,
-            drop_last=True,
-            dataset=dataset,
-            shuffle=True
         )
-        dataloader = DataLoader(dataset, batch_sampler=batch_sampler, num_workers=self.num_workers, pin_memory=True)
+
+        dataloader = DataLoader(
+            dataset,
+            batch_size=None,  # Batching is handled in the dataset
+            num_workers=0,
+        )
+
+        # Save example embeddings for use in the first epoch
+        self.example_embeddings = next(iter(dataloader))["text_embedding"][:9].to(self.device)
 
         return dataloader
 
     def training_step(self, batch, batch_idx):
-        latents, caption_embeddings = batch
+        latents = batch["vae_latent"]
+
+        caption_embeddings = batch["text_embedding"]
 
         bs = latents.shape[0]
 
@@ -239,11 +243,11 @@ class LitMicroDiT(L.LightningModule):
 
         if self.ln:
             nt = torch.randn((bs,)).to(self.device)
-            t = torch.sigmoid(nt).to(torch.float16)
+            t = torch.sigmoid(nt)
         else:
-            t = torch.rand((bs,)).to(self.device).to(torch.float16)
+            t = torch.rand((bs,)).to(self.device)
         texp = t.view([bs, *([1] * len(latents.shape[1:]))])
-        z1 = torch.randn_like(latents, dtype=torch.float16)
+        z1 = torch.randn_like(latents)
         zt = (1 - texp) * latents + texp * z1
         
         vtheta = self.model(zt, t, caption_embeddings, mask)
@@ -256,11 +260,11 @@ class LitMicroDiT(L.LightningModule):
         loss = batchwise_mse.mean()
         loss = loss * 1 / (1 - self.mask_ratio)
 
-        self.log("Loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("Loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=bs)
 
         return loss
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def sample(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
         b = z.size(0)
         dt = 1.0 / sample_steps
@@ -268,7 +272,7 @@ class LitMicroDiT(L.LightningModule):
         images = [z]
         for i in range(sample_steps, 0, -1):
             t = i / sample_steps
-            t = torch.tensor([t] * b).to(z.device).to(torch.float16)
+            t = torch.tensor([t] * b).to(z.device)
 
             vc = self.model(z, t, cond, None)
             if null_cond is not None:
@@ -278,14 +282,6 @@ class LitMicroDiT(L.LightningModule):
             z = z - dt * vc
             images.append(z)
         return (images[-1] / VAE_SCALING_FACTOR)
-    
-    def on_train_start(self):
-        # Get the first batch from the dataloader
-        dataloader = self.train_dataloader()
-        latents, embeddings = next(iter(dataloader))
-        
-        # Take the first 9 embeddings
-        self.example_embeddings = embeddings[:9].to(self.device)
     
     def on_train_epoch_start(self):
         # Use the same random noise every epoch
