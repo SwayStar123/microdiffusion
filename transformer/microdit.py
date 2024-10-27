@@ -7,7 +7,7 @@ import lightning as L
 import torch
 import torch
 from torch.utils.data import DataLoader
-from dataset.shapebatching_dataset import ShapeBatchingDataset
+from dataset.packing_dataset import get_datasets, CombinedDataset
 from config import VAE_SCALING_FACTOR, DS_DIR_BASE, USERNAME, DATASET_NAME
 import torchvision
 from datasets import load_dataset
@@ -211,22 +211,14 @@ class LitMicroDiT(L.LightningModule):
         load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", num_proc=self.num_workers)
 
     def train_dataloader(self):
-        hf_dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}").to_iterable_dataset().shuffle(seed=self.seed, buffer_size=self.batch_size*16)
-        dataset = ShapeBatchingDataset(
-            hf_dataset=hf_dataset,
-            batch_size=self.batch_size,
-        )
-
-        dataloader = DataLoader(
-            dataset,
-            batch_size=None,  # Batching is handled in the dataset
-            num_workers=0,
-        )
+        datasets = get_datasets()
+        dataloaders = [DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True) for dataset in datasets]
+        dataset = CombinedDataset(dataloaders, self.seed)
 
         # Save example embeddings for use in the first epoch
-        self.example_embeddings = next(iter(dataloader))["text_embedding"][:9].to(self.device)
+        self.example_embeddings = next(iter(dataset))["text_embedding"][:9].to(self.device)
 
-        return dataloader
+        return dataset
 
     def training_step(self, batch, batch_idx):
         latents = batch["vae_latent"]
