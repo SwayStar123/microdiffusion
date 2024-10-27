@@ -42,8 +42,9 @@ class CombinedDatasetIterator:
         dataset, = self._rng.choices(self._datasets, weights=self._weights, k=1)
 
         batch = next(dataset)
+        s = batch["vae_latent_shape"]
 
-        vae_latent_shape = tuple(batch['vae_latent_shape'][0])
+        vae_latent_shape = (s[0][0], s[1][0], s[2][0])
         batch["vae_latent"] = torch.tensor(np.stack([np.frombuffer(s, dtype=np.float16).copy() for s in batch['vae_latent']])).reshape(-1, *vae_latent_shape),
         batch["text_embedding"] = torch.tensor(np.stack([np.frombuffer(s, dtype=np.float16).copy() for s in batch['text_embedding']])),
 

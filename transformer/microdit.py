@@ -213,15 +213,13 @@ class LitMicroDiT(L.LightningModule):
         dataset = CombinedDataset(dataloaders, self.seed)
 
         # Save example embeddings for use in the first epoch
-        self.example_embeddings = next(iter(dataset))["text_embedding"][:9].to(self.device)
+        self.example_embeddings = next(iter(dataset))["text_embedding"][0][:9].to(self.device)
 
         return dataset
 
     def training_step(self, batch, batch_idx):
-        latents = batch["vae_latent"]
-
-        caption_embeddings = batch["text_embedding"]
-
+        latents = batch["vae_latent"][0]
+        caption_embeddings = batch["text_embedding"][0]
         bs = latents.shape[0]
 
         latents = latents * VAE_SCALING_FACTOR
