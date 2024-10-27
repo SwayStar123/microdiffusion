@@ -3,6 +3,8 @@ from torch.utils.data import IterableDataset
 from datasets import load_dataset
 from huggingface_hub import HfFileSystem
 from config import USERNAME, DATASET_NAME, DS_DIR_BASE
+import torch
+import numpy as np
 
 def get_datasets():
     fs = HfFileSystem()
@@ -38,4 +40,11 @@ class CombinedDatasetIterator:
 
     def __next__(self):
         dataset, = self._rng.choices(self._datasets, weights=self._weights, k=1)
-        return next(dataset)
+
+        batch = next(dataset)
+
+        vae_latent_shape = tuple(batch['vae_latent_shape'][0])
+        batch["vae_latent"] = torch.tensor(np.stack([np.frombuffer(s, dtype=np.float16).copy() for s in batch['vae_latent']])).reshape(-1, *vae_latent_shape),
+        batch["text_embedding"] = torch.tensor(np.stack([np.frombuffer(s, dtype=np.float16).copy() for s in batch['text_embedding']])),
+
+        return batch
