@@ -207,9 +207,6 @@ class LitMicroDiT(L.LightningModule):
     def forward(self, x, t, mask):
         self.model(x, t, mask)
 
-    def prepare_data(self):
-        load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", num_proc=self.num_workers)
-
     def train_dataloader(self):
         datasets = get_datasets()
         dataloaders = [DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True) for dataset in datasets]
