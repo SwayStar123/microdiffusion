@@ -11,8 +11,8 @@ from torch.utils.data import DataLoader
 from transformer.utils import random_mask, apply_mask_to_tensor
 from tqdm import tqdm
 
-def get_dataset(bs, seed):
-    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", split="train").shuffle(seed)
+def get_dataset(bs, seed, num_workers=16):
+    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", split="train", num_proc=num_workers).shuffle(seed)
     dataset = Coco30kShapeBatchingDataset(dataset, bs, True, seed)
     return dataset
 
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     print("Starting training...")
 
     accelerator = Accelerator()
-    dataset = get_dataset(BS, SEED)
+    dataset = get_dataset(BS, SEED, num_workers=64)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
