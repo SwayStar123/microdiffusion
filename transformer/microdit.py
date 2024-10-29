@@ -182,6 +182,25 @@ class MicroDiT(nn.Module):
         x = unpatchify(x, self.patch_size, height, width)
         
         return x
+    
+    @torch.no_grad()
+    def sample(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
+        b = z.size(0)
+        dt = 1.0 / sample_steps
+        dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
+        images = [z]
+        for i in range(sample_steps, 0, -1):
+            t = i / sample_steps
+            t = torch.tensor([t] * b).to(z.device).to(torch.float16)
+
+            vc = self(z, t, cond, None)
+            if null_cond is not None:
+                vu = self(z, t, null_cond)
+                vc = vu + cfg * (vc - vu)
+
+            z = z - dt * vc
+            images.append(z)
+        return (images[-1] / VAE_SCALING_FACTOR)
 
 class LitMicroDiT(L.LightningModule):
     def __init__(self, model, vae, epochs, batch_size, num_workers=16, seed=42, learning_rate=1e-4,
