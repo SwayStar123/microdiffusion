@@ -74,8 +74,6 @@ if __name__ == "__main__":
                     num_heads, mlp_dim, caption_embed_dim,
                     num_experts, active_experts,
                     dropout, patch_mixer_layers)
-    
-    model = torch.compile(model)
 
     print("Number of parameters: ", sum(p.numel() for p in model.parameters()))
 
