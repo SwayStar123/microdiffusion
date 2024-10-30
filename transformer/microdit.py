@@ -1,15 +1,10 @@
 import torch.nn as nn
 from .embed import PatchEmbed, get_2d_sincos_pos_embed
-from .utils import random_mask, remove_masked_patches, add_masked_patches, unpatchify, apply_mask_to_tensor
+from .utils import remove_masked_patches, add_masked_patches, unpatchify
 from .backbone import TransformerBackbone
 from .moedit import TimestepEmbedder
-import lightning as L
 import torch
-import torch
-from torch.utils.data import DataLoader
-from dataset.shapebatching_dataset import ShapeBatchingDataset
-from config import VAE_SCALING_FACTOR, DS_DIR_BASE, USERNAME, DATASET_NAME
-import torchvision
+from config import VAE_SCALING_FACTOR
 from datasets import load_dataset
 
 class PatchMixer(nn.Module):
@@ -331,118 +326,3 @@ class MicroDiT(nn.Module):
             z = z - dt * vc
             images.append(z)
         return (images[-1] / VAE_SCALING_FACTOR)
-    
-    
-
-class LitMicroDiT(L.LightningModule):
-    def __init__(self, model, vae, epochs, batch_size, num_workers=16, seed=42, learning_rate=1e-4,
-                ln=True, mask_ratio=0.5):
-        super().__init__()
-        self.model = model
-        self.learning_rate = learning_rate
-        self.ln = ln
-        self.mask_ratio = mask_ratio
-        self.noise = torch.randn(9, 4, 32, 32)
-        self.vae = vae
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.seed = seed
-        self.example_embeddings = None
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-
-        return optimizer
-
-    def forward(self, x, t, mask):
-        self.model(x, t, mask)
-
-    def train_dataloader(self):
-        dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", split="train").to_iterable_dataset(1000).shuffle(self.seed, buffer_size = self.batch_size * 20)
-        dataset = ShapeBatchingDataset(dataset, self.batch_size, True, self.seed)
-
-        self.example_embeddings = next(iter(dataset))["text_embedding"][:9].to(self.device)
-        return dataset
-
-    def training_step(self, batch, batch_idx):
-        latents = batch["vae_latent"]
-        caption_embeddings = batch["text_embedding"]
-        bs = latents.shape[0]
-
-        latents = latents * VAE_SCALING_FACTOR
-
-        mask = random_mask(bs, latents.shape[-2], latents.shape[-1], self.model.patch_size, mask_ratio=self.mask_ratio).to(self.device)
-
-        if self.ln:
-            nt = torch.randn((bs,)).to(self.device)
-            t = torch.sigmoid(nt)
-        else:
-            t = torch.rand((bs,)).to(self.device)
-        texp = t.view([bs, *([1] * len(latents.shape[1:]))])
-        z1 = torch.randn_like(latents)
-        zt = (1 - texp) * latents + texp * z1
-        
-        vtheta = self.model(zt, t, caption_embeddings, mask)
-
-        latents = apply_mask_to_tensor(latents, mask, self.model.patch_size)
-        vtheta = apply_mask_to_tensor(vtheta, mask, self.model.patch_size)
-        z1 = apply_mask_to_tensor(z1, mask, self.model.patch_size)
-
-        batchwise_mse = ((z1 - latents - vtheta) ** 2).mean(dim=list(range(1, len(latents.shape))))
-        loss = batchwise_mse.mean()
-        # loss = loss * 1 / (1 - self.mask_ratio)
-
-        self.log("Loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=bs)
-
-        return loss
-
-    @torch.no_grad()
-    def sample(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
-        b = z.size(0)
-        dt = 1.0 / sample_steps
-        dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
-        images = [z]
-        for i in range(sample_steps, 0, -1):
-            t = i / sample_steps
-            t = torch.tensor([t] * b).to(z.device)
-
-            vc = self.model(z, t, cond, None)
-            if null_cond is not None:
-                vu = self.model(z, t, null_cond)
-                vc = vu + cfg * (vc - vu)
-
-            z = z - dt * vc
-            images.append(z)
-        return (images[-1] / VAE_SCALING_FACTOR)
-    
-    def on_train_epoch_start(self):
-        # Use the same random noise every epoch
-        noise = self.noise.to(self.device)
-        
-        # Use the stored embeddings
-        sampled_latents = self.sample(noise, self.example_embeddings)
-        
-        # Decode latents to images
-        sampled_images = self.vae.decode(sampled_latents).sample
-
-        # Log the sampled images
-        grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
-        self.logger.experiment.add_image("Sampled Images", grid, self.global_step)
-
-    def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
-        # Log sampled images every 1000 steps
-        if self.global_step % 1000 == 0:
-            # Use the same random noise every time
-            noise = self.noise.to(self.device)
-            
-            # Use the stored embeddings
-            sampled_latents = self.sample(noise, self.example_embeddings)
-            
-            # Decode latents to images
-            sampled_images = self.vae.decode(sampled_latents).sample
-
-            # Log the sampled images
-            grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
-            self.logger.experiment.add_image("Sampled Images", grid, self.global_step)
-

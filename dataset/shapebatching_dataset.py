@@ -18,7 +18,7 @@ class ShapeBatchingDataset(IterableDataset):
         shape_batches = defaultdict(list)
         for sample in self.dataset:
             # Get the shape as a tuple to use as a key
-            shape_key = tuple(sample['vae_latent_shape'][1:])
+            shape_key = tuple(sample['vae_latent_shape'])
             shape_batches[shape_key].append(sample) 
 
             # If enough samples are accumulated for this shape, yield a batch
