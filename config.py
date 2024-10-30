@@ -9,6 +9,8 @@ EPOCHS = 30
 MASK_RATIO = 0.75
 SEED = 42
 
+LR = 1e-4
+
 VAE_HF_NAME = "madebyollin/sdxl-vae-fp16-fix"
 VAE_CHANNELS = 4
 SIGLIP_HF_NAME = "hf-hub:timm/ViT-SO400M-14-SigLIP-384"

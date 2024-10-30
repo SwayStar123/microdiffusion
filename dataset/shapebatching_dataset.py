@@ -4,15 +4,16 @@ from collections import defaultdict
 import numpy as np
 
 class ShapeBatchingDataset(IterableDataset):
-    def __init__(self, hf_dataset, batch_size, shuffle=True, seed=42):
+    def __init__(self, hf_dataset, batch_size, shuffle=True, seed=42, buffer_multiplier=20):
         self.dataset = hf_dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
+        self.buffer_multiplier = buffer_multiplier
 
     def __iter__(self):
         if self.shuffle:
-            self.dataset = self.dataset.shuffle(seed=self.seed)
+            self.dataset = self.dataset.shuffle(seed=self.seed, buffer_size=self.batch_size*self.buffer_multiplier)
         
         shape_batches = defaultdict(list)
         for sample in self.dataset:
@@ -38,7 +39,7 @@ class ShapeBatchingDataset(IterableDataset):
 
         batch = {
             'caption': [s['caption'] for s in samples],
-            'vae_latent': torch.tensor(np.stack([np.frombuffer(s['vae_latent'], dtype=np.float16).copy() for s in samples])).reshape(-1, *vae_latent_shape),
+            'vae_latent': torch.tensor(np.stack([np.frombuffer(s['vae_latent'], dtype=np.float32).copy() for s in samples])).reshape(-1, *vae_latent_shape),
             'vae_latent_shape': vae_latent_shape,
             'text_embedding': torch.tensor(np.stack([np.frombuffer(s['text_embedding'], dtype=np.float16).copy() for s in samples])),
         }

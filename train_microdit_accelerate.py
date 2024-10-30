@@ -4,15 +4,13 @@ from transformer.microdit import MicroDiT
 from accelerate import Accelerator
 from config import BS, EPOCHS, MASK_RATIO, VAE_SCALING_FACTOR, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, DS_DIR_BASE, SEED, USERNAME, DATASET_NAME
 from config import DIT_S as DIT
-import datasets
 from datasets import load_dataset
 from dataset.shapebatching_dataset import Coco30kShapeBatchingDataset
-from torch.utils.data import DataLoader
 from transformer.utils import random_mask, apply_mask_to_tensor
 from tqdm import tqdm
 
 def get_dataset(bs, seed, num_workers=16):
-    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", split="train", num_proc=num_workers).shuffle(seed)
+    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", split="train").to_iterable_dataset(100).shuffle(seed, buffer_size = bs * 20)
     dataset = Coco30kShapeBatchingDataset(dataset, bs, True, seed)
     return dataset
 
@@ -50,7 +48,6 @@ if __name__ == "__main__":
     accelerator = Accelerator()
     dataset = get_dataset(BS, SEED, num_workers=64)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, dataset)
 
@@ -85,7 +82,6 @@ if __name__ == "__main__":
 
             accelerator.backward(loss)
             optimizer.step()
-            lr_scheduler.step()
 
         print(f"Epoch {epoch} complete.")
 

@@ -4,7 +4,7 @@ from transformer.microdit import LitMicroDiT, MicroDiT
 import lightning as L
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.callbacks import ModelCheckpoint
-from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, SEED
+from config import BS, EPOCHS, MASK_RATIO, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, SEED, LR
 from config import DIT_S as DIT
 from torch.amp import autocast
 import datasets
@@ -39,13 +39,13 @@ if __name__ == "__main__":
     print("Starting training...")
 
     with autocast(device_type="cuda", dtype=torch.float16):
-        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO)
+        model = LitMicroDiT(model, vae=vae, epochs=EPOCHS, batch_size=BS, num_workers=16, seed=SEED, mask_ratio=MASK_RATIO, learning_rate=LR)
 
         checkpoint_callback = ModelCheckpoint(dirpath="models/diffusion/", every_n_epochs=1)
 
-        trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback])
+        trainer = L.Trainer(max_epochs=EPOCHS, callbacks=[checkpoint_callback], strategy='ddp_find_unused_parameters_true')
         tuner = Tuner(trainer)
-        tuner.lr_find(model)
+        # tuner.lr_find(model)
 
         trainer.fit(model=model)
 
