@@ -423,16 +423,20 @@ class DiTBlock(nn.Module):
                 if module.out_proj.bias is not None:
                     nn.init.constant_(module.out_proj.bias, 0)
             elif isinstance(module, nn.LayerNorm):
-                nn.init.constant_(module.bias, 0)
-                nn.init.constant_(module.weight, 1.0)
+                if module.weight is not None:
+                    nn.init.constant_(module.weight, 1.0)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
 
         # Apply basic initialization to all modules
         self.apply(_basic_init)
 
         # Zero-out the last layer of adaLN modulation if it exists
         if hasattr(self, 'adaLN_modulation'):
-            nn.init.constant_(self.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(self.adaLN_modulation[-1].bias, 0)
+            if self.adaLN_modulation[-1].weight is not None:
+                nn.init.constant_(self.adaLN_modulation[-1].weight, 0)
+            if self.adaLN_modulation[-1].bias is not None:
+                nn.init.constant_(self.adaLN_modulation[-1].bias, 0)
 
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)

@@ -36,8 +36,10 @@ class PatchMixer(nn.Module):
                     nn.init.constant_(lin.bias, 0)
             # Initialize the LayerNorm layers
             for ln in [module.norm1, module.norm2]:
-                nn.init.constant_(ln.bias, 0)
-                nn.init.constant_(ln.weight, 1.0)
+                if ln.weight is not None:
+                    nn.init.constant_(ln.weight, 1.0)
+                if ln.bias is not None:
+                    nn.init.constant_(ln.bias, 0)
 
         # Initialize each TransformerEncoderLayer
         for layer in self.layers:
@@ -187,42 +189,52 @@ class MicroDiT(nn.Module):
         # Apply basic initialization to all modules
         self.apply(_basic_init)
 
+        # [Rest of the initialization code remains the same...]
+
         # Initialize the patch embedding projection
         w = self.patch_embed.proj.weight.data
         nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        nn.init.constant_(self.patch_embed.proj.bias, 0)
+        if self.patch_embed.proj.bias is not None:
+            nn.init.constant_(self.patch_embed.proj.bias, 0)
 
         # Initialize timestep embedding MLP
         nn.init.normal_(self.time_embed.mlp[0].weight, std=0.02)
-        nn.init.constant_(self.time_embed.mlp[0].bias, 0)
+        if self.time_embed.mlp[0].bias is not None:
+            nn.init.constant_(self.time_embed.mlp[0].bias, 0)
         nn.init.normal_(self.time_embed.mlp[2].weight, std=0.02)
-        nn.init.constant_(self.time_embed.mlp[2].bias, 0)
+        if self.time_embed.mlp[2].bias is not None:
+            nn.init.constant_(self.time_embed.mlp[2].bias, 0)
 
         # Initialize caption embedding layers
         for layer in self.caption_embed:
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_uniform_(layer.weight)
-                nn.init.constant_(layer.bias, 0)
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0)
 
         # Initialize MLP layers in self.mlp
         for layer in self.mlp:
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_uniform_(layer.weight)
-                nn.init.constant_(layer.bias, 0)
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0)
 
         # Initialize MLP layers in self.pool_mlp
         for layer in self.pool_mlp:
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_uniform_(layer.weight)
-                nn.init.constant_(layer.bias, 0)
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0)
 
         # Initialize the linear layer in self.linear
         nn.init.xavier_uniform_(self.linear.weight)
-        nn.init.constant_(self.linear.bias, 0)
+        if self.linear.bias is not None:
+            nn.init.constant_(self.linear.bias, 0)
 
         # Zero-out the last linear layer in the output to ensure initial predictions are zero
         nn.init.constant_(self.output[-1].weight, 0)
-        nn.init.constant_(self.output[-1].bias, 0)
+        if self.output[-1].bias is not None:
+            nn.init.constant_(self.output[-1].bias, 0)
 
         # Initialize the backbone
         self.backbone.initialize_weights()

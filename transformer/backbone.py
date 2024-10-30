@@ -57,8 +57,10 @@ class TransformerBackbone(nn.Module):
                 if module.out_proj.bias is not None:
                     nn.init.constant_(module.out_proj.bias, 0)
             elif isinstance(module, nn.LayerNorm):
-                nn.init.constant_(module.bias, 0)
-                nn.init.constant_(module.weight, 1.0)
+                if module.weight is not None:
+                    nn.init.constant_(module.weight, 1.0)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
             elif isinstance(module, nn.TransformerEncoderLayer):
                 # Initialize TransformerEncoderLayer modules
                 # Initialize the self-attention layers
@@ -75,21 +77,26 @@ class TransformerBackbone(nn.Module):
                         nn.init.constant_(lin.bias, 0)
                 # Initialize the LayerNorm layers
                 for ln in [module.norm1, module.norm2]:
-                    nn.init.constant_(ln.bias, 0)
-                    nn.init.constant_(ln.weight, 1.0)
+                    if ln.weight is not None:
+                        nn.init.constant_(ln.weight, 1.0)
+                    if ln.bias is not None:
+                        nn.init.constant_(ln.bias, 0)
 
         # Apply basic initialization to all modules
         self.apply(_basic_init)
 
         # Initialize input and class embeddings
         nn.init.xavier_uniform_(self.input_embedding.weight)
-        nn.init.constant_(self.input_embedding.bias, 0)
+        if self.input_embedding.bias is not None:
+            nn.init.constant_(self.input_embedding.bias, 0)
         nn.init.xavier_uniform_(self.class_embedding.weight)
-        nn.init.constant_(self.class_embedding.bias, 0)
+        if self.class_embedding.bias is not None:
+            nn.init.constant_(self.class_embedding.bias, 0)
 
         # Initialize output layer
         nn.init.xavier_uniform_(self.output_layer.weight)
-        nn.init.constant_(self.output_layer.bias, 0)
+        if self.output_layer.bias is not None:
+            nn.init.constant_(self.output_layer.bias, 0)
 
         # Initialize DiTBlocks if any
         for layer in self.layers:
