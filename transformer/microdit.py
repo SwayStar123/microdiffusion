@@ -375,7 +375,7 @@ class LitMicroDiT(L.LightningModule):
 
         batchwise_mse = ((z1 - latents - vtheta) ** 2).mean(dim=list(range(1, len(latents.shape))))
         loss = batchwise_mse.mean()
-        loss = loss * 1 / (1 - self.mask_ratio)
+        # loss = loss * 1 / (1 - self.mask_ratio)
 
         self.log("Loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=bs)
 
