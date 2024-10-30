@@ -296,4 +296,21 @@ class LitMicroDiT(L.LightningModule):
 
         # Log the sampled images
         grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
-        self.logger.experiment.add_image("Sampled Images", grid, self.current_epoch)
+        self.logger.experiment.add_image("Sampled Images", grid, self.global_step)
+
+    def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx=0):
+        # Log sampled images every 1000 steps
+        if self.global_step % 1000 == 0:
+            # Use the same random noise every time
+            noise = self.noise.to(self.device)
+            
+            # Use the stored embeddings
+            sampled_latents = self.sample(noise, self.example_embeddings)
+            
+            # Decode latents to images
+            sampled_images = self.vae.decode(sampled_latents).sample
+
+            # Log the sampled images
+            grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
+            self.logger.experiment.add_image("Sampled Images", grid, self.global_step)
+
