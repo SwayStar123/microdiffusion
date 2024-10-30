@@ -159,8 +159,10 @@ class MicroDiT(nn.Module):
                     nn.init.constant_(module.out_proj.bias, 0)
             elif isinstance(module, nn.LayerNorm):
                 # Initialize LayerNorm layers
-                nn.init.constant_(module.bias, 0)
-                nn.init.constant_(module.weight, 1.0)
+                if module.weight is not None:
+                    nn.init.constant_(module.weight, 1.0)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
             elif isinstance(module, nn.TransformerEncoderLayer):
                 # Initialize TransformerEncoderLayer modules
                 # Initialize the self-attention layers
@@ -177,8 +179,10 @@ class MicroDiT(nn.Module):
                         nn.init.constant_(lin.bias, 0)
                 # Initialize the LayerNorm layers
                 for ln in [module.norm1, module.norm2]:
-                    nn.init.constant_(ln.bias, 0)
-                    nn.init.constant_(ln.weight, 1.0)
+                    if ln.weight is not None:
+                        nn.init.constant_(ln.weight, 1.0)
+                    if ln.bias is not None:
+                        nn.init.constant_(ln.bias, 0)
 
         # Apply basic initialization to all modules
         self.apply(_basic_init)
