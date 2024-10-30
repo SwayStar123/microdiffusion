@@ -43,6 +43,59 @@ class TransformerBackbone(nn.Module):
 
         self.output_layer = nn.Linear(embed_dim, input_dim)
 
+    def initialize_weights(self):
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.MultiheadAttention):
+                nn.init.xavier_uniform_(module.in_proj_weight)
+                if module.in_proj_bias is not None:
+                    nn.init.constant_(module.in_proj_bias, 0)
+                nn.init.xavier_uniform_(module.out_proj.weight)
+                if module.out_proj.bias is not None:
+                    nn.init.constant_(module.out_proj.bias, 0)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.constant_(module.bias, 0)
+                nn.init.constant_(module.weight, 1.0)
+            elif isinstance(module, nn.TransformerEncoderLayer):
+                # Initialize TransformerEncoderLayer modules
+                # Initialize the self-attention layers
+                nn.init.xavier_uniform_(module.self_attn.in_proj_weight)
+                if module.self_attn.in_proj_bias is not None:
+                    nn.init.constant_(module.self_attn.in_proj_bias, 0)
+                nn.init.xavier_uniform_(module.self_attn.out_proj.weight)
+                if module.self_attn.out_proj.bias is not None:
+                    nn.init.constant_(module.self_attn.out_proj.bias, 0)
+                # Initialize the linear layers in the feedforward network
+                for lin in [module.linear1, module.linear2]:
+                    nn.init.xavier_uniform_(lin.weight)
+                    if lin.bias is not None:
+                        nn.init.constant_(lin.bias, 0)
+                # Initialize the LayerNorm layers
+                for ln in [module.norm1, module.norm2]:
+                    nn.init.constant_(ln.bias, 0)
+                    nn.init.constant_(ln.weight, 1.0)
+
+        # Apply basic initialization to all modules
+        self.apply(_basic_init)
+
+        # Initialize input and class embeddings
+        nn.init.xavier_uniform_(self.input_embedding.weight)
+        nn.init.constant_(self.input_embedding.bias, 0)
+        nn.init.xavier_uniform_(self.class_embedding.weight)
+        nn.init.constant_(self.class_embedding.bias, 0)
+
+        # Initialize output layer
+        nn.init.xavier_uniform_(self.output_layer.weight)
+        nn.init.constant_(self.output_layer.bias, 0)
+
+        # Initialize DiTBlocks if any
+        for layer in self.layers:
+            if isinstance(layer, DiTBlock):
+                layer.initialize_weights()
+
     def forward(self, x, c_emb):
         x = self.input_embedding(x)
         class_emb = self.class_embedding(c_emb)

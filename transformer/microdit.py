@@ -20,6 +20,29 @@ class PatchMixer(nn.Module):
             for _ in range(num_layers)
         ])
 
+    def initialize_weights(self):
+        def _init_transformer_layer(module):
+            # Initialize the self-attention layers
+            nn.init.xavier_uniform_(module.self_attn.in_proj_weight)
+            if module.self_attn.in_proj_bias is not None:
+                nn.init.constant_(module.self_attn.in_proj_bias, 0)
+            nn.init.xavier_uniform_(module.self_attn.out_proj.weight)
+            if module.self_attn.out_proj.bias is not None:
+                nn.init.constant_(module.self_attn.out_proj.bias, 0)
+            # Initialize the linear layers in the feedforward network
+            for lin in [module.linear1, module.linear2]:
+                nn.init.xavier_uniform_(lin.weight)
+                if lin.bias is not None:
+                    nn.init.constant_(lin.bias, 0)
+            # Initialize the LayerNorm layers
+            for ln in [module.norm1, module.norm2]:
+                nn.init.constant_(ln.bias, 0)
+                nn.init.constant_(ln.weight, 1.0)
+
+        # Initialize each TransformerEncoderLayer
+        for layer in self.layers:
+            _init_transformer_layer(layer)
+
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
@@ -112,6 +135,97 @@ class MicroDiT(nn.Module):
             nn.Linear(self.embed_dim, patch_size[0] * patch_size[1] * in_channels)
         )
 
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        # Initialize all linear layers and biases
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Conv2d):
+                # Initialize convolutional layers like linear layers
+                nn.init.xavier_uniform_(module.weight.view(module.weight.size(0), -1))
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.MultiheadAttention):
+                # Initialize MultiheadAttention layers
+                nn.init.xavier_uniform_(module.in_proj_weight)
+                if module.in_proj_bias is not None:
+                    nn.init.constant_(module.in_proj_bias, 0)
+                nn.init.xavier_uniform_(module.out_proj.weight)
+                if module.out_proj.bias is not None:
+                    nn.init.constant_(module.out_proj.bias, 0)
+            elif isinstance(module, nn.LayerNorm):
+                # Initialize LayerNorm layers
+                nn.init.constant_(module.bias, 0)
+                nn.init.constant_(module.weight, 1.0)
+            elif isinstance(module, nn.TransformerEncoderLayer):
+                # Initialize TransformerEncoderLayer modules
+                # Initialize the self-attention layers
+                nn.init.xavier_uniform_(module.self_attn.in_proj_weight)
+                if module.self_attn.in_proj_bias is not None:
+                    nn.init.constant_(module.self_attn.in_proj_bias, 0)
+                nn.init.xavier_uniform_(module.self_attn.out_proj.weight)
+                if module.self_attn.out_proj.bias is not None:
+                    nn.init.constant_(module.self_attn.out_proj.bias, 0)
+                # Initialize the linear layers in the feedforward network
+                for lin in [module.linear1, module.linear2]:
+                    nn.init.xavier_uniform_(lin.weight)
+                    if lin.bias is not None:
+                        nn.init.constant_(lin.bias, 0)
+                # Initialize the LayerNorm layers
+                for ln in [module.norm1, module.norm2]:
+                    nn.init.constant_(ln.bias, 0)
+                    nn.init.constant_(ln.weight, 1.0)
+
+        # Apply basic initialization to all modules
+        self.apply(_basic_init)
+
+        # Initialize the patch embedding projection
+        w = self.patch_embed.proj.weight.data
+        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        nn.init.constant_(self.patch_embed.proj.bias, 0)
+
+        # Initialize timestep embedding MLP
+        nn.init.normal_(self.time_embed.mlp[0].weight, std=0.02)
+        nn.init.constant_(self.time_embed.mlp[0].bias, 0)
+        nn.init.normal_(self.time_embed.mlp[2].weight, std=0.02)
+        nn.init.constant_(self.time_embed.mlp[2].bias, 0)
+
+        # Initialize caption embedding layers
+        for layer in self.caption_embed:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.constant_(layer.bias, 0)
+
+        # Initialize MLP layers in self.mlp
+        for layer in self.mlp:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.constant_(layer.bias, 0)
+
+        # Initialize MLP layers in self.pool_mlp
+        for layer in self.pool_mlp:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.constant_(layer.bias, 0)
+
+        # Initialize the linear layer in self.linear
+        nn.init.xavier_uniform_(self.linear.weight)
+        nn.init.constant_(self.linear.bias, 0)
+
+        # Zero-out the last linear layer in the output to ensure initial predictions are zero
+        nn.init.constant_(self.output[-1].weight, 0)
+        nn.init.constant_(self.output[-1].bias, 0)
+
+        # Initialize the backbone
+        self.backbone.initialize_weights()
+
+        # Initialize the PatchMixer
+        self.patch_mixer.initialize_weights()
+
     def forward(self, x, t, caption_embeddings, mask=None):
         # x: (batch_size, in_channels, height, width)
         # t: (batch_size, 1)
@@ -201,6 +315,8 @@ class MicroDiT(nn.Module):
             z = z - dt * vc
             images.append(z)
         return (images[-1] / VAE_SCALING_FACTOR)
+    
+    
 
 class LitMicroDiT(L.LightningModule):
     def __init__(self, model, vae, epochs, batch_size, num_workers=16, seed=42, learning_rate=1e-4,

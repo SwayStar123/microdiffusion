@@ -409,6 +409,31 @@ class DiTBlock(nn.Module):
             nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
+    def initialize_weights(self):
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.MultiheadAttention):
+                nn.init.xavier_uniform_(module.in_proj_weight)
+                if module.in_proj_bias is not None:
+                    nn.init.constant_(module.in_proj_bias, 0)
+                nn.init.xavier_uniform_(module.out_proj.weight)
+                if module.out_proj.bias is not None:
+                    nn.init.constant_(module.out_proj.bias, 0)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.constant_(module.bias, 0)
+                nn.init.constant_(module.weight, 1.0)
+
+        # Apply basic initialization to all modules
+        self.apply(_basic_init)
+
+        # Zero-out the last layer of adaLN modulation if it exists
+        if hasattr(self, 'adaLN_modulation'):
+            nn.init.constant_(self.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(self.adaLN_modulation[-1].bias, 0)
+
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa)) 

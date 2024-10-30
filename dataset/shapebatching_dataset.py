@@ -35,7 +35,7 @@ class ShapeBatchingDataset(IterableDataset):
 
     def prepare_batch(self, samples):
         # Convert lists of samples into tensors
-        vae_latent_shape = tuple(samples[0]['vae_latent_shape'][1:])
+        vae_latent_shape = tuple(samples[0]['vae_latent_shape'])
 
         batch = {
             'caption': [s['caption'] for s in samples],
