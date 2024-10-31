@@ -11,6 +11,7 @@ from tqdm import tqdm
 import datasets
 import torchvision
 import os
+import pickle
 
 def sample_images(model, vae, noise, embeddings):
     # Use the stored embeddings
@@ -101,6 +102,8 @@ if __name__ == "__main__":
             for index, caption in enumerate(example_captions):
                 f.write(f"{index}: {caption}\n")
 
+        losses = []
+
     for epoch in range(EPOCHS):
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch}", leave=False)
         for batch_idx, batch in enumerate(progress_bar):
@@ -135,10 +138,12 @@ if __name__ == "__main__":
             optimizer.step()
 
             progress_bar.set_postfix(loss=loss.item())
+            if accelerator.is_local_main_process:
+                losses.append(loss.item())
 
-            if batch_idx % 1000 == 0 and accelerator.is_local_main_process:
-                grid = sample_images(model, vae, noise, example_embeddings)
-                torchvision.utils.save_image(grid, f"logs/sampled_images_epoch_{epoch}_batch_{batch_idx}.png")
+                if batch_idx % 1000 == 0:
+                    grid = sample_images(model, vae, noise, example_embeddings)
+                    torchvision.utils.save_image(grid, f"logs/sampled_images_epoch_{epoch}_batch_{batch_idx}.png")
 
         print(f"Epoch {epoch} complete.")
         accelerator.wait_for_everyone()
@@ -148,11 +153,16 @@ if __name__ == "__main__":
             torch.save(unwrapped_model.state_dict(), model_save_path)
             print(f"Model saved to {model_save_path}.")
 
+
     print("Training complete.")
 
     # Save model in /models
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        # Save losses as a pickle
+        with open("logs/losses.pkl", "wb") as f:
+            pickle.dump(losses, f)
+
         unwrapped_model = accelerator.unwrap_model(model)
         model_save_path = "models/pretrained_microdit_model.pt"
         torch.save(unwrapped_model.state_dict(), model_save_path)
