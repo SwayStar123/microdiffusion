@@ -83,9 +83,23 @@ if __name__ == "__main__":
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, dataset)
+    
+    if accelerator.is_main_process:
+        os.makedirs("logs", exist_ok=True)
 
-    noise = torch.randn(9, 4, 32, 32).to(device)
-    example_embeddings = next(iter(dataset))["text_embedding"][:9].to(device)
+        noise = torch.randn(9, 4, 32, 32).to(device)
+        example_batch = next(iter(dataset))
+        example_embeddings = example_batch["text_embedding"][:9].to(device)
+        example_captions = example_batch["caption"][:9]
+        example_latents = example_batch["vae_latent"][:9].to(device)
+        example_ground_truth = vae.decode(example_latents).sample
+        grid = torchvision.utils.make_grid(example_ground_truth, nrow=3, normalize=True, scale_each=True)
+        torchvision.utils.save_image(grid, f"logs/example_images.png")
+
+        # Save captions
+        with open("logs/example_captions.txt", "w") as f:
+            for index, caption in enumerate(example_captions):
+                f.write(f"{index}: {caption}\n")
 
     for epoch in range(EPOCHS):
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch}", leave=False)
@@ -124,16 +138,22 @@ if __name__ == "__main__":
 
             if batch_idx % 1000 == 0 and accelerator.is_local_main_process:
                 grid = sample_images(model, vae, noise, example_embeddings)
-                os.makedirs("logs", exist_ok=True)
                 torchvision.utils.save_image(grid, f"logs/sampled_images_epoch_{epoch}_batch_{batch_idx}.png")
 
         print(f"Epoch {epoch} complete.")
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process:
+            unwrapped_model = accelerator.unwrap_model(model)
+            model_save_path = f"models/microdit_model_epoch_{epoch}.pt"
+            torch.save(unwrapped_model.state_dict(), model_save_path)
+            print(f"Model saved to {model_save_path}.")
 
     print("Training complete.")
 
     # Save model in /models
     accelerator.wait_for_everyone()
-    unwrapped_model = accelerator.unwrap_model(model)
-    model_save_path = "models/microdit_model.pt"
-    torch.save(unwrapped_model.state_dict(), model_save_path)
-    print(f"Model saved to {model_save_path}.")
+    if accelerator.is_main_process:
+        unwrapped_model = accelerator.unwrap_model(model)
+        model_save_path = "models/pretrained_microdit_model.pt"
+        torch.save(unwrapped_model.state_dict(), model_save_path)
+        print(f"Model saved to {model_save_path}.")
