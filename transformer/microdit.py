@@ -309,7 +309,7 @@ class MicroDiT(nn.Module):
         return x
     
     @torch.no_grad()
-    def sample(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
+    def sample(self, z, cond, sample_steps=50, cfg=2.0):
         b = z.size(0)
         dt = 1.0 / sample_steps
         dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
@@ -319,9 +319,9 @@ class MicroDiT(nn.Module):
             t = torch.tensor([t] * b).to(z.device).to(torch.float16)
 
             vc = self(z, t, cond, None)
-            if null_cond is not None:
-                vu = self(z, t, null_cond)
-                vc = vu + cfg * (vc - vu)
+            null_cond = torch.zeros_like(cond)
+            vu = self(z, t, null_cond)
+            vc = vu + cfg * (vc - vu)
 
             z = z - dt * vc
             images.append(z)
