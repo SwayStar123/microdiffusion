@@ -6,7 +6,7 @@ from config import BS, EPOCHS, MASK_RATIO, VAE_SCALING_FACTOR, VAE_CHANNELS, VAE
 from config import DIT_B as DIT
 from datasets import load_dataset
 from dataset.shapebatching_dataset import ShapeBatchingDataset
-from transformer.utils import random_mask, apply_mask_to_tensor
+from transformer.utils import random_mask, apply_mask_to_tensor, num_patches
 from tqdm import tqdm
 import datasets
 import torchvision
@@ -25,7 +25,7 @@ def sample_images(model, vae, noise, embeddings):
     return grid
 
 def get_dataset(bs, seed, num_workers=16):
-    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}", split="train").to_iterable_dataset(1000).shuffle(seed, buffer_size = bs * 20)
+    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", streaming=True).shuffle(seed, buffer_size = bs * 20)
     dataset = ShapeBatchingDataset(dataset, bs, True, seed)
     return dataset
 
@@ -35,9 +35,10 @@ def sample(model, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
     dt = 1.0 / sample_steps
     dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
     images = [z]
+    n_patches = num_patches(z, patch_size)
     for i in range(sample_steps, 0, -1):
         t = i / sample_steps
-        t = torch.tensor([t] * b).to(z.device).to(torch.float16)
+        t = torch.tensor(t).to(z.device).to(torch.float16).repeat(b, n_patches)
 
         vc = model(z, t, cond, None)
         if null_cond is not None:
@@ -50,7 +51,7 @@ def sample(model, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
 
 if __name__ == "__main__":
     # Comment this out if you havent downloaded dataset and models yet
-    datasets.config.HF_HUB_OFFLINE = 1
+    # datasets.config.HF_HUB_OFFLINE = 1
 
     input_dim = VAE_CHANNELS  # 4 channels in latent space
     patch_size = (2, 2)
@@ -117,10 +118,15 @@ if __name__ == "__main__":
 
             mask = random_mask(bs, latents.shape[-2], latents.shape[-1], patch_size, mask_ratio=MASK_RATIO).to(device)
 
-            nt = torch.randn((bs,)).to(device)
+            n_patches = num_patches(latents, patch_size)
+
+            nt = torch.randn((bs, n_patches)).to(device)
             t = torch.sigmoid(nt)
             
-            texp = t.view([bs, *([1] * len(latents.shape[1:]))]).to(device)
+            # Expand the t tensor from (bs, num_patches) to (bs, 1, h, w), where h and w are the patch sizes. Duplicate the patch value h*w times.
+            texp = t.view(bs, n_patches, 1, 1).repeat(1, 1, patch_size[0], patch_size[1])
+            texp = texp.view(bs, 1, latents.shape[-2], latents.shape[-1])
+
             z1 = torch.randn_like(latents, device=device)
             zt = (1 - texp) * latents + texp * z1
             

@@ -239,13 +239,15 @@ class MicroDiT(nn.Module):
 
     def forward(self, x, t, caption_embeddings, mask=None):
         # x: (batch_size, in_channels, height, width)
-        # t: (batch_size, 1)
+        # t: (batch_size, num_patches)
         # caption_embeddings: (batch_size, caption_embed_dim)
         # mask: (batch_size, num_patches)
         
         batch_size, channels, height, width = x.shape
 
         patch_size_h, patch_size_w = self.patch_size
+
+        num_patches = t.shape[1]
 
         # Image processing
         x = self.patch_embed(x)  # (batch_size, num_patches, embed_dim)
@@ -258,23 +260,42 @@ class MicroDiT(nn.Module):
         x = x + pos_embed
         
         # Timestep embedding
-        t_emb = self.time_embed(t)  # (batch_size, embed_dim)
+        # (batch_size, num_patches, embed_dim) -> (batch_size * num_patches, embed_dim)
+        t_emb = self.time_embed(t.view(-1, 1))
+        # (batch_size * num_patches, embed_dim) -> (batch_size, num_patches, embed_dim)
+        t_emb = t_emb.view(batch_size, num_patches, -1)
 
         # Caption embedding
-        c_emb = self.caption_embed(caption_embeddings)  # (batch_size, embed_dim)
+        # (batch_size, caption_embed_dim) -> (batch_size, embed_dim)
+        c_emb = self.caption_embed(caption_embeddings) 
 
-        mha_out = self.mha(t_emb.unsqueeze(1), c_emb.unsqueeze(1), c_emb.unsqueeze(1))[0].squeeze(1)
+        # MHA
+        # t_emb: (batch_size, num_patches, embed_dim)
+        # c_emb: (batch_size, embed_dim)
+        # c_emb.unsqueeze(1): (batch_size, 1, embed_dim)
+        # (batch_size, num_patches, embed_dim) -> (batch_size, num_patches, embed_dim)
+        mha_out = self.mha(t_emb, c_emb.unsqueeze(1), c_emb.unsqueeze(1))[0]
+
+        # (batch_size, num_patches, embed_dim) -> (batch_size, num_patches, embed_dim)
         mlp_out = self.mlp(mha_out)
         
         # Pool + MLP
-        pool_out = self.pool_mlp(mlp_out.unsqueeze(2))
+        # mlp_out: (batch_size, num_patches, embed_dim)
+        # mlp_out.permute(0, 2, 1): (batch_size, embed_dim, num_patches)
+        # (batch_size, embed_dim, num_patches) -> (batch_size, embed_dim)
+        pool_out = self.pool_mlp(mlp_out.permute(0, 2, 1))
 
         # Pool + MLP + t_emb
-        pool_out = (pool_out + t_emb).unsqueeze(1)
+        # t_emb: (batch_size, num_patches, embed_dim)
+        # pool_out: (batch_size, embed_dim)
+        # pool_out.unsqueeze(1): (batch_size, 1, embed_dim)
+        # (batch_size, 1, embed_dim) + (batch_size, num_patches, embed_dim) -> (batch_size, num_patches, embed_dim)
+        pool_out = (pool_out.unsqueeze(1) + t_emb)
         
         # Apply linear layer
-        cond_signal = self.linear(mlp_out).unsqueeze(1)  # (batch_size, 1, embed_dim)
-        cond = (cond_signal + pool_out).expand(-1, x.shape[1], -1)
+        # (batch_size, num_patches, embed_dim) -> (batch_size, num_patches, embed_dim)
+        cond_signal = self.linear(mlp_out)
+        cond = cond_signal + pool_out
         
         # Add conditioning signal to all patches
         # (batch_size, num_patches, embed_dim)
@@ -283,12 +304,13 @@ class MicroDiT(nn.Module):
         # Patch-mixer
         x = self.patch_mixer(x)
 
+        # MHA + MLP + Pool + MLP + t_emb
+        cond = mlp_out + pool_out
+
         # Remove masked patches
         if mask is not None:
             x = remove_masked_patches(x, mask)
-
-        # MHA + MLP + Pool + MLP + t_emb
-        cond = (mlp_out.unsqueeze(1) + pool_out).expand(-1, x.shape[1], -1)
+            cond = remove_masked_patches(cond, mask)
 
         x = x + cond
 

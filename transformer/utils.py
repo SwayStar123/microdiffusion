@@ -1,5 +1,20 @@
 import torch
-import torch.nn.functional as F
+
+def num_patches(x, patch_size):
+    """
+    Returns the number of patches in a tensor.
+
+    Args:
+        x (torch.Tensor): Tensor of shape (bs, c, h, w)
+        patch_size (tuple of int): Size of each patch.
+
+    Returns:
+        int: Number of patches in the tensor.
+    """
+    bs, c, h, w = x.shape
+    num_patches_h = h // patch_size[0]
+    num_patches_w = w // patch_size[1]
+    return num_patches_h * num_patches_w
 
 def apply_mask_to_tensor(x, mask, patch_size):
     """
