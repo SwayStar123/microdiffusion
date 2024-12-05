@@ -1,5 +1,5 @@
 USERNAME = "SwayStar123"
-DATASET_NAME = "preprocessed_commoncatalog-cc-by"
+DATASET_NAME = "FFHQ_1024_DC-AE_f32"
 DS_DIR_BASE = "../../datasets"
 MODELS_DIR_BASE = "../../models"
 VAE_SCALING_FACTOR = 0.13025

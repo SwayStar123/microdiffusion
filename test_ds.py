@@ -1,18 +1,38 @@
+import sys
+sys.path.append('../dcae')
+from dcae import DCAE
+
 from datasets import load_dataset
-from dataset.shapebatching_dataset import ShapeBatchingDataset
+import datasets
+# from dataset.shapebatching_dataset import ShapeBatchingDataset
 from time import time
-from config import DATASET_NAME, USERNAME, DS_DIR_BASE, VAE_SCALING_FACTOR
+from config import DATASET_NAME, USERNAME, DS_DIR_BASE, VAE_SCALING_FACTOR, MODELS_DIR_BASE
+import torch
+import numpy as np
+import torchvision
 
-dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", streaming=True)
-dataset = ShapeBatchingDataset(dataset, 768, True, 0)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DTYPE = torch.bfloat16
 
-for batch in dataset:
-    latents = batch["vae_latent"]
-    # Get std dev, mean, min, max
-    print(latents.std(), latents.mean(), latents.min(), latents.max())
+datasets.config.HF_HUB_OFFLINE = 1
 
-    latents = latents * VAE_SCALING_FACTOR
-    print(latents.std(), latents.mean(), latents.min(), latents.max())
+dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}")
+# dataset = ShapeBatchingDataset(dataset, 768, True, 0)
+dc_ae = DCAE("dc-ae-f32c32-mix-1.0", device=DEVICE, dtype=DTYPE, cache_dir=f"{MODELS_DIR_BASE}/dc_ae").eval()
 
-    embedding = batch["text_embedding"]
-    print(embedding.std(), embedding.mean(), embedding.min(), embedding.max())
+def denorm(x):
+    return (x * 0.5 + 0.5).clamp(0, 1)
+
+latent = next(iter(dataset))["latent"]
+latent = torch.tensor(latent, device=DEVICE, dtype=DTYPE)
+
+with torch.no_grad():
+        recon = dc_ae.decode(latent.unsqueeze(0)).squeeze(0)
+
+recon = denorm(recon).to(torch.float32)
+
+torchvision.utils.save_image(
+    recon,
+    "recon.png",
+    normalize=False,
+)
