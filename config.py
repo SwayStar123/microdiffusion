@@ -11,8 +11,8 @@ SEED = 42
 
 LR = 1e-4
 
-VAE_HF_NAME = "madebyollin/sdxl-vae-fp16-fix"
-VAE_CHANNELS = 4
+VAE_HF_NAME = "dc-ae-f32c32-mix-1.0"
+VAE_CHANNELS = 32
 SIGLIP_HF_NAME = "hf-hub:timm/ViT-SO400M-14-SigLIP-384"
 SIGLIP_EMBED_DIM = 1152
 

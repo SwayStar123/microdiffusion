@@ -1,5 +1,4 @@
 import torch
-from diffusers import AutoencoderKL
 from transformer.microdit import MicroDiT
 from accelerate import Accelerator
 from config import BS, EPOCHS, MASK_RATIO, VAE_SCALING_FACTOR, VAE_CHANNELS, VAE_HF_NAME, MODELS_DIR_BASE, DS_DIR_BASE, SEED, USERNAME, DATASET_NAME
@@ -12,13 +11,18 @@ import datasets
 import torchvision
 import os
 import pickle
+from torch.utils.data import DataLoader
+
+import sys
+sys.path.append('../dcae')
+from dcae import DCAE
 
 def sample_images(model, vae, noise, embeddings):
     # Use the stored embeddings
     sampled_latents = sample(model, noise, embeddings)
     
     # Decode latents to images
-    sampled_images = vae.decode(sampled_latents).sample
+    sampled_images = vae.decode(sampled_latents)
 
     # Log the sampled images
     grid = torchvision.utils.make_grid(sampled_images, nrow=3, normalize=True, scale_each=True)
@@ -52,13 +56,13 @@ if __name__ == "__main__":
     # Comment this out if you havent downloaded dataset and models yet
     datasets.config.HF_HUB_OFFLINE = 1
 
-    input_dim = VAE_CHANNELS  # 4 channels in latent space
-    patch_size = (2, 2)
+    input_dim = VAE_CHANNELS  # 32
+    patch_size = (1, 1)
     embed_dim = DIT["embed_dim"]
     num_layers = DIT["num_layers"]
     num_heads = DIT["num_heads"]
     mlp_dim = embed_dim * 4
-    caption_embed_dim = 1152  # SigLip embeds to 1152 dims
+    caption_embed_dim = 1 # Null for this dataset
     # pos_embed_dim = 60
     pos_embed_dim = None
     num_experts = 8
@@ -69,10 +73,10 @@ if __name__ == "__main__":
     accelerator = Accelerator()
     device = accelerator.device
 
-    vae = AutoencoderKL.from_pretrained(f"{VAE_HF_NAME}", cache_dir=f"{MODELS_DIR_BASE}/vae").to(device)
+    dc_ae = DCAE("dc-ae-f32c32-mix-1.0", device=device, dtype=torch.bfloat16, cache_dir=f"{MODELS_DIR_BASE}/dc_ae").eval()
 
     model = MicroDiT(input_dim, patch_size, embed_dim, num_layers, 
-                    num_heads, mlp_dim, caption_embed_dim,
+                    num_heads, mlp_dim, caption_embed_dim=caption_embed_dim,
                     num_experts, active_experts,
                     dropout, patch_mixer_layers)
 
@@ -80,7 +84,9 @@ if __name__ == "__main__":
 
     print("Starting training...")
     
-    dataset = get_dataset(BS, SEED + accelerator.process_index, num_workers=64)
+    # dataset = get_dataset(BS, SEED + accelerator.process_index, num_workers=64)
+    dataset = load_dataset(f"{USERNAME}/{DATASET_NAME}", split="train", cache_dir=f"{DS_DIR_BASE}/{DATASET_NAME}")
+    dataset = DataLoader(dataset, batch_size=BS, shuffle=True, num_workers=64)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, dataset)
@@ -93,7 +99,7 @@ if __name__ == "__main__":
         example_embeddings = example_batch["text_embedding"][:9].to(device)
         example_captions = example_batch["caption"][:9]
         example_latents = example_batch["vae_latent"][:9].to(device)
-        example_ground_truth = vae.decode(example_latents).sample
+        example_ground_truth = dc_ae.decode(example_latents)
         grid = torchvision.utils.make_grid(example_ground_truth, nrow=3, normalize=True, scale_each=True)
         torchvision.utils.save_image(grid, f"logs/example_images.png")
 
@@ -110,8 +116,11 @@ if __name__ == "__main__":
             optimizer.zero_grad()
     
             latents = batch["vae_latent"].to(device)
-            caption_embeddings = batch["text_embedding"].to(device)
+            # caption_embeddings = batch["text_embedding"].to(device)
             bs = latents.shape[0]
+
+            # Null caption embeddings for this dataset
+            caption_embeddings = torch.zeros((bs, caption_embed_dim), device=device)
 
             latents = latents * VAE_SCALING_FACTOR
 
@@ -142,7 +151,7 @@ if __name__ == "__main__":
                 losses.append(loss.item())
 
                 if batch_idx % 1000 == 0:
-                    grid = sample_images(model, vae, noise, example_embeddings)
+                    grid = sample_images(model, dc_ae, noise, example_embeddings)
                     torchvision.utils.save_image(grid, f"logs/sampled_images_epoch_{epoch}_batch_{batch_idx}.png")
 
         print(f"Epoch {epoch} complete.")
