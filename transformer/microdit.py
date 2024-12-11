@@ -252,7 +252,7 @@ class MicroDiT(nn.Module):
         
         # Generate positional embeddings
         # (height // patch_size_h, width // patch_size_w, embed_dim)
-        pos_embed = get_2d_sincos_pos_embed(self.embed_dim, height // patch_size_h, width // patch_size_w)
+        pos_embed = get_2d_sincos_pos_embed(self.embed_dim, height // patch_size_h, width // patch_size_w, dtype=x.dtype)
         pos_embed = pos_embed.to(x.device).unsqueeze(0).expand(batch_size, -1, -1)
         
         x = x + pos_embed

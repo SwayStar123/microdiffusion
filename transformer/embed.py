@@ -12,40 +12,40 @@ class PatchEmbed(nn.Module):
         return x.flatten(2).transpose(1, 2)  # (B, E, H', W') -> (B, H'*W', E)
     
 
-def get_2d_sincos_pos_embed(embed_dim, h, w):
+def get_2d_sincos_pos_embed(embed_dim, h, w, dtype=torch.float32):
     """
     :param embed_dim: dimension of the embedding
     :param h: height of the grid
     :param w: width of the grid
     :return: [h*w, embed_dim] or [1+h*w, embed_dim] (w/ or w/o cls_token)
     """
-    grid_h = torch.arange(h, dtype=torch.float32)
-    grid_w = torch.arange(w, dtype=torch.float32)
+    grid_h = torch.arange(h, dtype=dtype)
+    grid_w = torch.arange(w, dtype=dtype)
     grid = torch.meshgrid(grid_h, grid_w, indexing='ij')
     grid = torch.stack(grid, dim=0)
 
     grid = grid.reshape([2, 1, h, w])
-    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
+    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid, dtype=dtype)
     return pos_embed
 
-def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
+def get_2d_sincos_pos_embed_from_grid(embed_dim, grid, dtype=torch.float32):
     assert embed_dim % 2 == 0
 
     # use half of dimensions to encode grid_h
-    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
-    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
+    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0], dtype=dtype)  # (H*W, D/2)
+    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1], dtype=dtype)  # (H*W, D/2)
 
     emb = torch.cat([emb_h, emb_w], dim=1) # (H*W, D)
     return emb
 
-def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos, dtype=torch.float32):
     """
     embed_dim: output dimension for each position
     pos: a list of positions to be encoded: size (M,)
     out: (M, D)
     """
     assert embed_dim % 2 == 0
-    omega = torch.arange(embed_dim // 2, dtype=torch.float32)
+    omega = torch.arange(embed_dim // 2, dtype=dtype)
     omega /= embed_dim / 2.
     omega = 1. / 10000**omega  # (D/2,)
 
@@ -58,7 +58,7 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     emb = torch.cat([emb_sin, emb_cos], dim=1)  # (M, D)
     return emb
 
-def get_timestep_embedding(timesteps, embedding_dim):
+def get_timestep_embedding(timesteps, embedding_dim, dtype=torch.float32):
     """
     Create sinusoidal timestep embeddings.
     :param timesteps: a 1-D Tensor of N indices, one per batch element.
@@ -69,7 +69,7 @@ def get_timestep_embedding(timesteps, embedding_dim):
     assert len(timesteps.shape) == 1, "Timesteps should be a 1-D tensor"
 
     half_dim = embedding_dim // 2
-    emb = torch.log(torch.tensor(10000, dtype=torch.float32)) / (half_dim - 1)
+    emb = torch.log(torch.tensor(10000, dtype=dtype)) / (half_dim - 1)
     emb = torch.exp(torch.arange(half_dim, dtype=torch.float32) * -emb)
     emb = emb.to(device=timesteps.device)
     emb = timesteps.float()[:, None] * emb[None, :]

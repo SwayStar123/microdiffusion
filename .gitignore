@@ -3,3 +3,4 @@ models
 lightning_logs
 __pycache__
 .env
+logs
