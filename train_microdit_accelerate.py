@@ -66,7 +66,7 @@ def batch_to_tensors(batch):
 
 if __name__ == "__main__":
     # Comment this out if you havent downloaded dataset and models yet
-    datasets.config.HF_HUB_OFFLINE = 1
+    # datasets.config.HF_HUB_OFFLINE = 1
 
     input_dim = VAE_CHANNELS  # 32
     patch_size = (1, 1)
