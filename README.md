@@ -2,8 +2,12 @@ uses sdxl_vae from https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/tree/mai
 
 Paper link: https://arxiv.org/pdf/2407.15811
 
-20 epochs of training on a 1b param model (commoon canvas cc-by dataset)
+20 epochs of training on a 1b param model (common canvas cc-by dataset)
 ![image](https://github.com/user-attachments/assets/4c25004e-f8a1-4980-b096-6e9852ae7d70)
+![image](https://github.com/user-attachments/assets/dfb8fea0-ea7c-492a-8791-9bd66bbba49e)
+![image](https://github.com/user-attachments/assets/3c4722f2-0126-420f-97f7-8b3ba35d3a74)
+![image](https://github.com/user-attachments/assets/90e40c72-445a-4bc6-a291-f837fc692139)
+
 
 You can download weights here: https://huggingface.co/SwayStar123/MicroDiT/blob/main/no_cfg/microdit_model_epoch_19.pt
 and put them in models folder, and use test_model.ipynb to inference
